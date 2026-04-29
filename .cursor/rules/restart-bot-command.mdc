@@ -1,0 +1,24 @@
+---
+description: Always give a copyable fenced bash block when telling the user to restart the Slack bot
+alwaysApply: true
+---
+
+# Restart command (copy button)
+
+Whenever you tell the user to **restart** the Transform Sim bot for this repo (`claude-slack-bot-mcp`), **always** include **exactly one** Markdown **fenced code block** using `bash` as the language, with **nothing on the same line as the opening fence** and **only the restart command inside** (one line), so the UI shows a **copy** control.
+
+Use this block verbatim (path matches this workspace):
+
+```bash
+cd /Users/jackpilon/claude-slack-bot-mcp && npm run startup
+```
+
+Do not substitute `npm run start` unless the user explicitly runs without ngrok; default to `npm run startup` per `README-MCP.md` / `scripts/startup.sh`.
+
+If they run the **original** repo instead, use:
+
+```bash
+cd /Users/jackpilon/claude-slack-bot && npm run startup
+```
+
+Only when they are clearly working in `claude-slack-bot`, not this MCP copy.

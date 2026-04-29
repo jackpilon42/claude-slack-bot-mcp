@@ -1,0 +1,9 @@
+node_modules/
+.venv-excel/
+.env
+.autodesk-tokens.json
+playwright/.bc-storage-state.json
+.env
+.autodesk-tokens.json
+node_modules/
+*.log

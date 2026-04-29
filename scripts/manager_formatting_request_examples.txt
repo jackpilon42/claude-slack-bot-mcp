@@ -1,0 +1,111 @@
+# One-sentence formatting requests (manager → employee style).
+# Flow: user/Slack → Claude → this bot / MCP → Smartsheet API (not Excel at runtime).
+# The sentences often sound like Excel (A1, "merge cells"); that is realistic manager
+# phrasing. The product maps that intent onto Smartsheet (column titles/IDs, row IDs,
+# format strings, and API limits—not an .xlsx engine).
+# Target NL coverage over time. Today the bot mainly supports:
+#   - Column by NUMBER + row/range + background color words or #hex (heuristic + intent)
+#   - Single-cell bold / unbold (column N row M), emphasize
+#   - smartsheet format / bold / picklist / clear / add row / etc.
+# Most items below are NOT implemented yet; keep them as a product checklist.
+
+Make column 2 row 7 have a green background.
+Bold the text in cell A1.
+Change the font color in B3 to red.
+Increase the font size in C5 to 14pt.
+Make the text in D8 italic.
+Add a thick border around cell E10.
+Center-align the text in F4.
+Right-align the numbers in column G.
+Wrap the text in cell H6.
+Merge cells A1 through D1.
+Give row 1 a dark blue background with white text.
+Make the font in B2 Arial instead of Calibri.
+Strikethrough the text in cell C9.
+Add a bottom border only to cells in row 5.
+Make column A twice as wide.
+Set row 3 to a height of 30 pixels.
+Highlight cell F7 in yellow.
+Remove all formatting from cell D4.
+Make the number in G12 display with two decimal places.
+Format column B as currency with a dollar sign.
+Change the background of every cell in row 10 to light gray.
+Make the text in A5 uppercase using formatting, not a formula.
+Add a diagonal border across cell C3.
+Make the font in E2 bold and increase it to 16pt.
+Set the number format in column D to display percentages.
+Add a double-line bottom border to row 8.
+Make cell B4 have a red background to flag it as an error.
+Left-align all text in column C.
+Change the font color in the entire row 1 to white.
+Add an outer border to the range A1:D10.
+Make the text in F3 subscript.
+Make the text in G5 superscript.
+Remove the background color from cell H9.
+Set column E to a fixed width of 15 characters.
+Format the date in cell A8 to show as "MM/DD/YYYY".
+Make the number in B10 display with a comma separator for thousands.
+Make cell C6 have a light blue background to indicate it's an input cell.
+Underline the text in D2.
+Add a top and bottom border to all cells in row 4.
+Change the font in the entire spreadsheet to Times New Roman.
+Make column F auto-fit to the width of its content.
+Add a thick left border to column B to separate it from column A.
+Format the numbers in column H to show negative values in parentheses instead of with a minus sign.
+Make cell E5 display its number in scientific notation.
+Add a dashed border to the range B2:B8.
+Set the background of even rows to alternating light gray for readability.
+Make the text in A3 vertically aligned to the top of the cell.
+Rotate the text in row 1 header cells by 45 degrees.
+Give cell G4 an orange background to mark it as pending review.
+Remove the bold formatting from all cells in column D.
+Make the text in H2 display in a dark green color.
+Add a medium-weight outer border to the table range A1:F20.
+Change the number format in B5 so zeros display as a dash instead.
+Make row 2 the same height as row 1.
+Apply a gradient-style fill to cell C10 using light yellow.
+Make the font in the entire column A bold.
+Change the border color on cell D6 to blue.
+Set the alignment in column E to center both horizontally and vertically.
+Format cell F9 to show the number as an integer with no decimal places.
+Unmerge the cells in the header row.
+Add a thick top border to row 11 to indicate a totals row.
+Make cell B7 have a purple background.
+Change the font size in column A to 10pt.
+Make the text in C4 bold and italic at the same time.
+Add a right border only to column D.
+Set the number format in column C to display four decimal places.
+Make cell A10 have a bright red font to indicate a critical value.
+Reduce the row height in rows 2 through 9 to be more compact.
+Apply a medium gray background to the entire column B.
+Make the text in D5 wrap and increase the row height accordingly.
+Change the border style around B3 to a dotted line.
+Make all numbers in row 12 bold to emphasize the totals.
+Set cell F2 to show its number formatted as a phone number.
+Give the header row a dark gray background and bold white font.
+Remove any border from cell C7.
+Make the text in E8 align to the bottom of the cell.
+Format column G to show all values as whole-number percentages with no decimals.
+Change the font in row 1 to a size 18 heading style.
+Make cell H5 have a teal background color.
+Add a left indent to the text in cells A2 through A10.
+Make the font color in column F match the dark blue in the header row.
+Format B6 so the number always displays with a leading zero if it's a single digit.
+Give every cell in column H a thin outer border.
+Make the text in D1 center across the selection from A1 to F1 without merging.
+Change the background of row 13 to a light peach color.
+Make cell C8 use a monospace font like Courier New.
+Set all borders in the range A1:E5 to a thin solid black line.
+Remove the italic formatting from column B.
+Make cell G3 display its text with double underline.
+Increase the font size in cells B1:F1 to make the header row stand out.
+Format column D to show dates as "Day, Month DD YYYY" (e.g., Monday, April 24 2026).
+Give cell A6 a bright yellow background to flag it for follow-up.
+Make the text in F6 vertically centered in the cell.
+Change the outer border of the entire data range to a thick black line.
+Set column C to be hidden from view.
+Make the font color in row 5 light gray to de-emphasize that data.
+Add a bold bottom border to row 1 to separate the headers from the data.
+Make cell E4 display its value in dark red with a light pink background.
+Change the column B header cell to have a bold, size 12, centered label.
+Apply a thick orange border to cell D3 to highlight it for the presentation.

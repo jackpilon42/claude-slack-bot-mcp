@@ -1,0 +1,86 @@
+BuildingConnected API — troubleshooting log (what we tried, what worked, what did not)
+===================================================================================
+Purpose: hand this to someone who needs the story of connecting BuildingConnected
+through APS on the Slack bot, without a list of bot-specific Slack keywords.
+
+CONTEXT
+-------
+The app is a Node Slack integration in this repo (Express, port 3000) that was
+extended to call Autodesk BuildingConnected REST API v2 alongside other work.
+Goal was real API access using an APS OAuth app (client id + secret in .env).
+
+ATTEMPT 1 — TWO-LEGGED (CLIENT CREDENTIALS) OAUTH
+---------------------------------------------------
+We first tried the client-credentials flow against Autodesk’s token endpoint
+and then called BuildingConnected. That path could obtain a bearer token, but
+BuildingConnected did not treat it as sufficient for user-scoped data. The
+API expects a user context for project-style resources. Conclusion: two-legged
+was the wrong model for this integration; we stopped pursuing it for BC.
+
+ATTEMPT 2 — THREE-LEGGED OAUTH (AUTHORIZATION CODE + REFRESH)
+--------------------------------------------------------------
+We implemented the full browser authorization path: redirect to Autodesk
+authorize URL, user signs in and approves, callback on the bot receives the
+code, exchange for access + refresh tokens, refresh on expiry. Tokens were
+persisted to a local json file on the server so process restarts do not lose
+the session (separate from .env secrets).
+
+What worked
+- Authorization and token exchange completed successfully.
+- Redirect/callback alignment: we had to reconcile localhost vs a public HTTPS
+  base URL (e.g. ngrok) with the exact callback URL registered on the APS app.
+- After switching to three-legged, we could call user-scoped endpoints.
+
+What we adjusted along the way
+- BuildingConnected base URL / path: initial guesses did not all match the
+  live “construction” API host; we corrected to the documented v2 base under
+  developer.api.autodesk.com/construction/buildingconnected/v2.
+- “Who am I” style checks: when a strict user profile endpoint behaved
+  differently than expected, we treated it as an auth-context diagnostic rather
+  than assuming OAuth was broken if other calls still proved a valid user token.
+
+CURRENT BLOCKER — NOT AN OAUTH “BUG”
+------------------------------------
+With a valid three-legged access token:
+- A user profile style call (users/me) succeeded and returned a coherent
+  BuildingConnected user payload for the authorized identity.
+- Listing projects via GET /projects returned HTTP 403 with a JSON body whose
+  detail was BC_PRO_SUBSCRIPTION_REQUIRED.
+
+Interpretation
+- This is not “forgot to use three-legged” and not fixed by reconnecting OAuth.
+- The server is refusing the projects list for a subscription/entitlement style
+  reason tied to that API surface and account context, not ngrok, Slack, or
+  malformed Authorization headers.
+
+AUTODESK SUPPORT OUTCOME (HIGH LEVEL)
+--------------------------------------
+A case opened through the general customer support path received a reply that
+the ticket was on the wrong support system for hands-on API help, and that
+ADN (Autodesk Developer Network) is the channel for direct API support; the
+email did not grant or deny API entitlement and did not resolve the 403.
+
+PUBLIC / COMMUNITY SIGNALS
+---------------------------
+We looked for others hitting the same literal error string. One Stack Overflow
+thread described the same BC_PRO_SUBSCRIPTION_REQUIRED response on a different
+BC endpoint, with three-legged tokens and refresh in place; there was no
+public “change X and it fixed it” answer. An Autodesk participant on that
+thread suggested verifying which identity is authorized and whether that user
+sits under an office that actually carries the BuildingConnected Pro-style
+entitlement the API expects, and to follow up privately with developer support
+with timestamps and failing request details.
+
+WHAT WE DID NOT SOLVE (YET)
+----------------------------
+We did not obtain a successful GET /projects for the production account in
+question. Unblocking that remains on Autodesk account/product alignment
+(entitlement, product line, or API enablement for that tenant/user), not on
+rewiring OAuth again.
+
+WHERE THIS IS IMPLEMENTED IN CODE
+---------------------------------
+Repo: claude-slack-bot
+Primary file: index.js (OAuth routes, token persistence, BuildingConnected HTTP
+helpers, Slack message handling).
+Local OAuth persistence: .autodesk-tokens.json (gitignored; not committed).

@@ -1,0 +1,34 @@
+{
+  "name": "claude-slack-bot-mcp",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "startup": "./scripts/startup.sh",
+    "start:slack-dev": "./scripts/startup.sh",
+    "status": "./scripts/status.sh",
+    "diagnose:slack": "node ./scripts/diagnose-slack.js",
+    "slack:ping-local": "node ./scripts/signed-slack-ping.js",
+    "start:ngrok": "./ngrok http 3000",
+    "start:all": "concurrently \"npm run start:ngrok\" \"npm run start\"",
+    "extract:project-timeline": "python3 scripts/extract_project_timeline_grid.py",
+    "import:project-timeline": "node scripts/smartsheet-import-from-grid.js",
+    "generate:timeline-commands": "python3 scripts/generate_excel_format_bot_commands.py > scripts/project_timeline_bot_commands.txt",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@anthropic-ai/sdk": "^0.87.0",
+    "@slack/web-api": "^7.15.0",
+    "concurrently": "^9.2.1",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "openai": "^6.3.0",
+    "playwright": "^1.52.0"
+  }
+}

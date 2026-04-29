@@ -1,0 +1,217 @@
+At column 2 row 2, use bold.
+Emphasize column 9 row 2 like the template.
+Put bold on column 2 row 4.
+Could you bold column 9 row 4?
+Emphasize column 2 row 5.
+Turn on bold for column 9 row 5.
+Could you bold column 2 row 8?
+Set column 7 row 8 to bold.
+Apply bold to column 9 row 8.
+Make column 24 row 8 bold.
+I'd like column 39 row 8 in bold.
+Template has column 54 row 8 bold; mirror that.
+Column 9 row 9 should render bold.
+Could you bold column 14 row 9?
+Set column 19 row 9 to bold.
+Put bold on column 24 row 9.
+For row 9, column 29, make that cell bold.
+Bold column 34 row 9.
+Column 39 row 9 — bold.
+Emphasize column 44 row 9 like the template.
+Can you put column 49 row 9 in bold?
+At column 54 row 9, use bold.
+Column 59 row 9 should render bold.
+Could you bold column 64 row 9?
+Can you put column 4 row 10 in bold?
+Set column 7 row 10 to bold.
+Make column 4 row 11 bold.
+Make column 43 row 11 bold.
+Column 4 row 14 — bold.
+Template has column 4 row 20 bold; mirror that.
+Can you put column 4 row 24 in bold?
+Column 4 row 28: bold.
+
+For row 8 in column 2, use a gray background.
+Please set column 3 on row 8 to a gray fill.
+On column 4, row 8 should have a gray background.
+Turn column 5 row 8 gray.
+Give column 6 row 8 a gray background, please.
+For row 8 in column 7, use a gray background.
+Please set column 8 on row 8 to a gray fill.
+On column 9, row 8 should have a gray background.
+For row 8 in column 24, use a gray background.
+Turn column 39 row 8 gray.
+Please set column 54 on row 8 to a gray fill.
+On column 2, row 11 should have a blue background.
+On column 11, row 11 should have a blue background.
+I'd like column 43 on row 11 filled in gray.
+Highlight column 15 row 12 with blue.
+Give column 20 row 13 a blue background, please.
+Please set column 2 on row 14 to a green fill.
+Could you make column 24 row 14 green?
+For row 15 in column 27, use a green background.
+Highlight column 2 row 20 with orange.
+Turn column 2 row 24 green.
+Highlight column 2 row 28 with purple.
+
+Merge columns 2 through 8 on row 2.
+On row 2, merge columns 9 to 14 into one cell.
+Combine columns 15 through 32 on row 2.
+Span columns 9–15 on row 4 as a single merged cell.
+Merge columns 16 through 28 on row 4.
+On row 5, merge columns 9 to 15 into one cell.
+Combine columns 16 through 27 on row 5.
+Span columns 9–23 on row 8 as a single merged cell.
+Merge columns 24 through 38 on row 8.
+On row 8, merge columns 39 to 53 into one cell.
+Combine columns 54 through 68 on row 8.
+Span columns 9–13 on row 9 as a single merged cell.
+Merge columns 14 through 18 on row 9.
+On row 9, merge columns 19 to 23 into one cell.
+Combine columns 24 through 28 on row 9.
+Span columns 29–33 on row 9 as a single merged cell.
+Merge columns 34 through 38 on row 9.
+On row 9, merge columns 39 to 43 into one cell.
+Combine columns 44 through 48 on row 9.
+Span columns 49–53 on row 9 as a single merged cell.
+Merge columns 54 through 58 on row 9.
+On row 9, merge columns 59 to 63 into one cell.
+Combine columns 64 through 68 on row 9.
+Span column 2 across rows 11 through 13 as one cell.
+Merge columns 4 through 6 from row 11 to row 13.
+On row 11, merge columns 7 to 8 into one cell.
+Combine columns 11 through 17 on row 11.
+Span column 43 across rows 11 through 30 as one cell.
+Merge columns 7 through 8 on row 12.
+On row 12, merge columns 15 to 20 into one cell.
+Combine columns 7 through 8 on row 13.
+Span columns 20–24 on row 13 as a single merged cell.
+Merge column 2 from row 14 down to row 19.
+Merge columns 4 through 6 from row 14 to row 19.
+Combine columns 7 through 8 on row 14.
+Span columns 24–29 on row 14 as a single merged cell.
+Merge columns 7 through 8 on row 15.
+On row 15, merge columns 27 to 30 into one cell.
+Combine columns 7 through 8 on row 16.
+Span columns 7–8 on row 17 as a single merged cell.
+Merge columns 7 through 8 on row 18.
+On row 19, merge columns 7 to 8 into one cell.
+Merge column 2 from row 20 down to row 23.
+Combine columns 4 to 6 across rows 20 through 23.
+Merge columns 7 through 8 on row 20.
+On row 21, merge columns 7 to 8 into one cell.
+Combine columns 7 through 8 on row 22.
+Span columns 7–8 on row 23 as a single merged cell.
+Merge column 2 from row 24 down to row 27.
+Combine columns 4 to 6 across rows 24 through 27.
+Combine columns 7 through 8 on row 24.
+Span columns 7–8 on row 25 as a single merged cell.
+Merge columns 7 through 8 on row 26.
+On row 27, merge columns 7 to 8 into one cell.
+Merge column 2 from row 28 down to row 30.
+Combine columns 4 to 6 across rows 28 through 30.
+Merge columns 7 through 8 on row 28.
+On row 29, merge columns 7 to 8 into one cell.
+Combine columns 7 through 8 on row 30.
+
+Set rows 1 through 36 to a uniform height of about 21 points.
+
+Narrow column 3 to about 1.33 characters wide.
+Set column 4 to a width of about 15.33 characters.
+Set column 9 to a tight width near 3.0 characters.
+Narrow column 44 to about 3.0 characters wide.
+Set column 1 to a tight width near 3.78 characters.
+
+Add a thick bottom border to row 2 from column 2 to column 32.
+Put a thin line along the bottom of row 4 across columns 2 through 7.
+Underline row 4 with a thin border from column 9 to column 28.
+Add a thin bottom border to row 5 from column 2 to column 7.
+Put a thin line along the bottom of row 5 across columns 9 through 28.
+Underline row 9 with a thin border from column 9 to column 68.
+Add a thin bottom border to row 10 from column 9 to column 68.
+Put a hairline line along the bottom of row 11 across columns 9 through 17.
+Underline row 11 with a hairline border from column 23 to column 42.
+Add a hairline bottom border to row 11 from column 44 to column 68.
+Put a hairline line along the bottom of row 12 across columns 9 through 42.
+Underline row 12 with a hairline border from column 44 to column 68.
+Add a medium bottom border to row 13 from column 3 to column 42.
+Put a medium line along the bottom of row 13 across columns 44 through 68.
+Underline row 14 with a hairline border from column 9 to column 42.
+Add a hairline bottom border to row 14 from column 44 to column 68.
+Put a hairline line along the bottom of row 15 across columns 9 through 42.
+Underline row 15 with a hairline border from column 44 to column 68.
+Add a hairline bottom border to row 16 from column 9 to column 42.
+Put a hairline line along the bottom of row 16 across columns 44 through 68.
+Underline row 17 with a hairline border from column 9 to column 42.
+Add a hairline bottom border to row 17 from column 44 to column 68.
+Put a hairline line along the bottom of row 18 across columns 44 through 68.
+Underline row 19 with a medium border from column 3 to column 42.
+Add a medium bottom border to row 19 from column 44 to column 68.
+Put a hairline line along the bottom of row 20 across columns 9 through 42.
+Underline row 20 with a hairline border from column 44 to column 68.
+Add a hairline bottom border to row 21 from column 9 to column 42.
+Put a hairline line along the bottom of row 21 across columns 44 through 68.
+Underline row 22 with a hairline border from column 9 to column 42.
+Add a hairline bottom border to row 22 from column 44 to column 68.
+Put a medium line along the bottom of row 23 across columns 3 through 42.
+Underline row 23 with a medium border from column 44 to column 68.
+Add a hairline bottom border to row 24 from column 9 to column 42.
+Put a hairline line along the bottom of row 24 across columns 44 through 68.
+Underline row 25 with a hairline border from column 9 to column 42.
+Add a hairline bottom border to row 25 from column 44 to column 68.
+Put a hairline line along the bottom of row 26 across columns 9 through 42.
+Underline row 26 with a hairline border from column 44 to column 68.
+Add a medium bottom border to row 27 from column 3 to column 42.
+Put a medium line along the bottom of row 27 across columns 44 through 68.
+Underline row 28 with a hairline border from column 9 to column 42.
+Add a hairline bottom border to row 28 from column 44 to column 68.
+Put a hairline line along the bottom of row 29 across columns 9 through 42.
+Underline row 29 with a hairline border from column 44 to column 68.
+Add a hairline bottom border to row 30 from column 9 to column 42.
+Put a hairline line along the bottom of row 30 across columns 44 through 68.
+
+Wrap the text in column 15 row 2.
+Turn on text wrapping for columns 2 to 8 on row 8.
+For row 9, enable wrap for columns 2 through 8.
+Wrap text in columns 2 through 6 on row 10.
+Wrap the text in column 8 row 10.
+Enable wrapping on column 4 row 11.
+Wrap the text in column 7 row 11.
+Enable wrapping on column 43 row 11.
+Wrap the text in column 7 row 12.
+Enable wrapping on column 7 row 13.
+Wrap the text in column 4 row 14.
+Enable wrapping on column 7 row 14.
+Wrap the text in column 7 row 15.
+Enable wrapping on column 7 row 16.
+Wrap the text in column 7 row 17.
+Enable wrapping on column 7 row 18.
+Wrap the text in column 7 row 19.
+Enable wrapping on column 4 row 20.
+Wrap the text in column 7 row 20.
+Enable wrapping on column 7 row 21.
+Wrap the text in column 7 row 22.
+Enable wrapping on column 7 row 23.
+Wrap the text in column 4 row 24.
+Enable wrapping on column 7 row 24.
+Wrap the text in column 7 row 25.
+Enable wrapping on column 7 row 26.
+Wrap the text in column 7 row 27.
+Enable wrapping on column 4 row 28.
+Wrap the text in column 7 row 28.
+Enable wrapping on column 7 row 29.
+Wrap the text in column 7 row 30.
+Turn on text wrapping for columns 2 to 8 on row 31.
+For row 32, enable wrap for columns 2 through 8.
+Wrap text in columns 2 through 8 on row 33.
+
+Format column 9 rows 11 through 33 as a whole-number percentage.
+From row 11 to row 33 in column 10, use currency with a dollar sign and two decimals formatting.
+Format column 16 row 5 as a short date (month, day, year).
+
+Center-align columns 9 through 10 on row 1.
+
+Use large blue headings (about 30 point) for columns 2 through 3 on row 1.
+Use white text in columns 30 to 38 on row 1.
+
+Highlight column 2 rows 8 through 10 with gray.

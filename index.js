@@ -3466,26 +3466,6 @@ app.post('/slack/events', async (req, res) => {
       return;
     }
 
-    const healthReply = getBasicHealthReply(userText);
-    if (healthReply) {
-      await postSlackMessage({
-        channel: event.channel,
-        text: healthReply,
-        thread_ts: replyThreadTs,
-      });
-      return;
-    }
-
-    let threadPriorBlock = '';
-    if (event.channel && replyThreadTs && event.ts && !event._local_post_to_channel) {
-      threadPriorBlock = await fetchSlackThreadPriorTranscript({
-        channel: event.channel,
-        threadRootTs: replyThreadTs,
-        currentMessageTs: event.ts,
-      });
-    }
-    const combinedRouting = threadPriorBlock ? `${threadPriorBlock}${userText}` : userText;
-
     /** One short “started” post per user message; final outcome is always a separate postSlackMessage. */
     let slackWorkAckPosted = false;
     async function postSlackWorkStartedIfNeeded() {
@@ -3508,6 +3488,26 @@ app.post('/slack/events', async (req, res) => {
       });
       return;
     }
+
+    const healthReply = getBasicHealthReply(userText);
+    if (healthReply) {
+      await postSlackMessage({
+        channel: event.channel,
+        text: healthReply,
+        thread_ts: replyThreadTs,
+      });
+      return;
+    }
+
+    let threadPriorBlock = '';
+    if (event.channel && replyThreadTs && event.ts && !event._local_post_to_channel) {
+      threadPriorBlock = await fetchSlackThreadPriorTranscript({
+        channel: event.channel,
+        threadRootTs: replyThreadTs,
+        currentMessageTs: event.ts,
+      });
+    }
+    const combinedRouting = threadPriorBlock ? `${threadPriorBlock}${userText}` : userText;
 
     const threadTsEarly = replyThreadTs;
     const publicBidsHint = startSlackSlowWorkHintTimer({

@@ -36,6 +36,7 @@ const {
   detectFileReference,
   detectProjectNameReference,
   detectProjectFileQuestion,
+  detectDocumentTask,
 } = require('./file-ingestor');
 
 function getProposalsOutputDir() {
@@ -132,6 +133,7 @@ function shouldHandleAsProposalPipeline(text, ctx = {}) {
     }
     return true;
   }
+  if (detectDocumentTask(t)) return true;
   if (detectProjectFileQuestion(t)) return true;
   return looksLikeProposalRequest(t);
 }
@@ -1145,6 +1147,101 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
   let useProjectFolderForDocx = false;
 
   try {
+    if (detectDocumentTask(effectiveText) && !looksLikeProposalRequest(effectiveText)) {
+      await slackClient.chat.postMessage({
+        channel,
+        thread_ts: threadTs,
+        text: ':gear: Reading project files and extracting the requested information...',
+      });
+      const PROJECT_BASE_DIR =
+        process.env.TRANSFORM_PROJECTS_DIR || path.join(os.homedir(), 'Downloads', 'transform-projects');
+      let folderPath = null;
+      if (fs.existsSync(PROJECT_BASE_DIR)) {
+        const folders = fs
+          .readdirSync(PROJECT_BASE_DIR, { withFileTypes: true })
+          .filter((f) => f.isDirectory())
+          .map((f) => f.name);
+        const lowerEff = effectiveText.toLowerCase();
+        for (const folder of folders) {
+          const folderWords = folder
+            .toLowerCase()
+            .replace(/[,._-]/g, ' ')
+            .split(/\s+/)
+            .filter((w) => w.length > 2);
+          if (folderWords.some((w) => lowerEff.includes(w))) {
+            folderPath = path.join(PROJECT_BASE_DIR, folder);
+            break;
+          }
+        }
+      }
+      if (!folderPath) {
+        await slackClient.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: ':warning: Could not find a matching project folder. Mention the project name, e.g. "for AutoZone Turlock".',
+        });
+        return null;
+      }
+      const extractedText = await readAllFilesInFolder(folderPath);
+      const taskResponse = await anthropicClient.messages.create({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 3000,
+        system:
+          'You are a construction document analyst. Answer the user request based ONLY on the provided project documents. Be thorough and specific. If asked for contact info, extract every person, company, phone, email, address, and role you can find.',
+        messages: [
+          {
+            role: 'user',
+            content: `User request: ${effectiveText}\n\nProject documents:\n${extractedText.slice(0, 60000)}`,
+          },
+        ],
+      });
+      const answer = taskResponse.content.find((b) => b.type === 'text')?.text || 'No information found.';
+      if (/pdf|doc/i.test(effectiveText)) {
+        const projectName = path.basename(folderPath);
+        const taskLabel = effectiveText
+          .slice(0, 60)
+          .replace(/[^a-zA-Z0-9 ]/g, '')
+          .trim();
+        const children = [
+          new Paragraph({
+            heading: HeadingLevel.HEADING_1,
+            children: [new TextRun({ text: `${projectName} — ${taskLabel}`, bold: true, size: 32, font: 'Arial' })],
+          }),
+          new Paragraph({ spacing: { after: 200 } }),
+          ...answer.split('\n').map((line) => new Paragraph({ children: [new TextRun({ text: line, size: 22, font: 'Arial' })] })),
+        ];
+        const doc = new Document({
+          sections: [
+            {
+              properties: {
+                page: {
+                  size: { width: 12240, height: 15840 },
+                  margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+                },
+              },
+              children,
+            },
+          ],
+        });
+        const buffer = await Packer.toBuffer(doc);
+        const safeLabel = taskLabel.replace(/\s+/g, '-');
+        const outPath = path.join(folderPath, `${safeLabel}.docx`);
+        fs.writeFileSync(outPath, buffer);
+        await slackClient.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: `:white_check_mark: Done!\n\n${answer.slice(0, 2000)}\n\nSaved to:\n\`${outPath}\``,
+        });
+      } else {
+        await slackClient.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: answer.slice(0, 3000),
+        });
+      }
+      return null;
+    }
+
     const projectQaName = detectProjectFileQuestion(effectiveText);
     if (projectQaName) {
       const folderPath = findProjectFolder(projectQaName);

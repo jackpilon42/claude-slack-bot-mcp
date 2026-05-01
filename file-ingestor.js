@@ -349,6 +349,14 @@ function detectProjectFileQuestion(text) {
   return best;
 }
 
+function detectDocumentTask(text) {
+  const lower = String(text || '').toLowerCase();
+  const taskKeywords = /\b(make|create|generate|build|extract|find|gather|pull|list|compile)\b/i.test(text);
+  const docKeywords = /\b(pdf|contact|info|sheet|summary|list|directory)\b/i.test(lower);
+  const fileRef = /transform-projects|downloads folder|files in|folder|downloaded/i.test(lower);
+  return taskKeywords && docKeywords && fileRef;
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -362,5 +370,6 @@ module.exports = {
   detectFileReference,
   detectProjectNameReference,
   detectProjectFileQuestion,
+  detectDocumentTask,
   SUPPORTED_EXTENSIONS,
 };

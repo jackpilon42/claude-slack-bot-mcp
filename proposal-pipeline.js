@@ -1183,33 +1183,150 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
         return null;
       }
       const extractedText = await readAllFilesInFolder(folderPath);
+      const projectName = path.basename(folderPath);
+      const isContactTask = /contact|directory|roles|info\s+for\s+every|info\s+sheet|phone|email/i.test(effectiveText);
+
+      let systemPrompt;
+      let userMessage;
+      if (isContactTask) {
+        systemPrompt = `You are extracting a contact directory from construction project documents. Be EXHAUSTIVE — search EVERY document including:
+- Drawing title blocks (architects, engineers, surveyors, civil/structural/MEP designers)
+- Specifications cover pages and contact lists
+- Geotech reports (geotechnical engineers, lab contacts)
+- Bid forms and prequalification forms
+- Subcontracts and addenda
+- Owner/Client info (the most important — they are the company commissioning the work)
+- General Contractor info
+- Any consultant, vendor, or representative mentioned
+
+Return contacts as a JSON array, ORDERED BY IMPORTANCE:
+1. OWNER / CLIENT (e.g., AutoZone Construction) — ALWAYS FIRST
+2. GENERAL CONTRACTOR
+3. ARCHITECT
+4. CIVIL ENGINEER
+5. STRUCTURAL ENGINEER
+6. MEP ENGINEERS
+7. GEOTECHNICAL ENGINEER
+8. LANDSCAPE ARCHITECT
+9. SURVEYOR
+10. Any other consultants, inspectors, or vendors
+
+Each contact: { "role": "...", "company": "...", "name": "...", "title": "...", "address": "...", "phone": "...", "email": "..." }
+Use null for missing fields. Return ONLY the JSON array, no other text.`;
+        userMessage = `Extract every contact from these ${projectName} project documents:\n\n${extractedText.slice(0, 80000)}`;
+      } else {
+        systemPrompt =
+          'You are a construction document analyst. Answer the user request based ONLY on the provided project documents. Be thorough and specific.';
+        userMessage = `User request: ${effectiveText}\n\nProject documents:\n${extractedText.slice(0, 60000)}`;
+      }
+
       const taskResponse = await anthropicClient.messages.create({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 3000,
-        system:
-          'You are a construction document analyst. Answer the user request based ONLY on the provided project documents. Be thorough and specific. If asked for contact info, extract every person, company, phone, email, address, and role you can find.',
-        messages: [
-          {
-            role: 'user',
-            content: `User request: ${effectiveText}\n\nProject documents:\n${extractedText.slice(0, 60000)}`,
-          },
-        ],
+        max_tokens: 4000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userMessage }],
       });
-      const answer = taskResponse.content.find((b) => b.type === 'text')?.text || 'No information found.';
+
+      let answer = taskResponse.content.find((b) => b.type === 'text')?.text || '';
+      if (!answer.trim()) answer = 'No information found.';
+
       if (/pdf|doc/i.test(effectiveText)) {
-        const projectName = path.basename(folderPath);
         const taskLabel = effectiveText
           .slice(0, 60)
           .replace(/[^a-zA-Z0-9 ]/g, '')
           .trim();
-        const children = [
+        const subtitle = isContactTask ? 'Project Contact Directory' : taskLabel || 'Document';
+
+        let children = [
           new Paragraph({
             heading: HeadingLevel.HEADING_1,
-            children: [new TextRun({ text: `${projectName} — ${taskLabel}`, bold: true, size: 32, font: 'Arial' })],
+            children: [
+              new TextRun({ text: `${projectName}`, bold: true, size: 36, font: 'Arial', color: '1F4E79' }),
+            ],
           }),
-          new Paragraph({ spacing: { after: 200 } }),
-          ...answer.split('\n').map((line) => new Paragraph({ children: [new TextRun({ text: line, size: 22, font: 'Arial' })] })),
+          new Paragraph({
+            children: [
+              new TextRun({ text: subtitle, bold: true, size: 28, font: 'Arial', color: '2E75B6' }),
+            ],
+            spacing: { after: 200 },
+          }),
+          new Paragraph({
+            children: [
+              new TextRun({
+                text: `Generated ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}`,
+                italics: true,
+                size: 20,
+                font: 'Arial',
+              }),
+            ],
+            spacing: { after: 400 },
+          }),
         ];
+
+        if (isContactTask) {
+          let contacts = [];
+          try {
+            const cleaned = answer.replace(/```json|```/g, '').trim();
+            contacts = JSON.parse(cleaned);
+          } catch (e) {
+            console.error('[doc-task] JSON parse error, falling back to plain text:', e.message);
+          }
+
+          if (Array.isArray(contacts) && contacts.length > 0) {
+            for (const c of contacts) {
+              children.push(
+                new Paragraph({
+                  heading: HeadingLevel.HEADING_2,
+                  children: [
+                    new TextRun({
+                      text: c.role || 'Contact',
+                      bold: true,
+                      size: 26,
+                      font: 'Arial',
+                      color: '1F4E79',
+                    }),
+                  ],
+                  spacing: { before: 320, after: 80 },
+                })
+              );
+              if (c.company) {
+                children.push(new Paragraph({ children: [new TextRun({ text: c.company, bold: true, size: 24, font: 'Arial' })] }));
+              }
+              if (c.name) {
+                children.push(
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text: `${c.name}${c.title ? ', ' + c.title : ''}`,
+                        size: 22,
+                        font: 'Arial',
+                      }),
+                    ],
+                  })
+                );
+              }
+              if (c.address) {
+                children.push(new Paragraph({ children: [new TextRun({ text: c.address, size: 22, font: 'Arial' })] }));
+              }
+              if (c.phone) {
+                children.push(new Paragraph({ children: [new TextRun({ text: `Phone: ${c.phone}`, size: 22, font: 'Arial' })] }));
+              }
+              if (c.email) {
+                children.push(new Paragraph({ children: [new TextRun({ text: `Email: ${c.email}`, size: 22, font: 'Arial' })] }));
+              }
+              children.push(new Paragraph({ spacing: { after: 200 } }));
+            }
+          } else {
+            children.push(
+              ...answer.split('\n').map((line) => new Paragraph({ children: [new TextRun({ text: line, size: 22, font: 'Arial' })] }))
+            );
+          }
+        } else {
+          children.push(
+            ...answer.split('\n').map((line) => new Paragraph({ children: [new TextRun({ text: line, size: 22, font: 'Arial' })] }))
+          );
+        }
+
         const doc = new Document({
           sections: [
             {
@@ -1224,13 +1341,38 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
           ],
         });
         const buffer = await Packer.toBuffer(doc);
-        const safeLabel = taskLabel.replace(/\s+/g, '-');
+        const safeLabel = isContactTask ? 'Contact-Directory' : taskLabel.replace(/\s+/g, '-');
         const outPath = path.join(folderPath, `${safeLabel}.docx`);
         fs.writeFileSync(outPath, buffer);
+
+        let slackPreview = answer;
+        if (isContactTask) {
+          try {
+            const cleaned = answer.replace(/```json|```/g, '').trim();
+            const contactsSlack = JSON.parse(cleaned);
+            if (Array.isArray(contactsSlack)) {
+              slackPreview = contactsSlack
+                .slice(0, 10)
+                .map((c) => {
+                  const lines = [`*${c.role || 'Contact'}*`];
+                  if (c.company) lines.push(c.company);
+                  if (c.name) lines.push(`${c.name}${c.title ? ', ' + c.title : ''}`);
+                  if (c.phone) lines.push(`📞 ${c.phone}`);
+                  if (c.email) lines.push(`✉️ ${c.email}`);
+                  return lines.join('\n');
+                })
+                .join('\n\n');
+            }
+          } catch {
+            /* keep slackPreview as answer */
+          }
+        }
+
+        const doneTitle = isContactTask ? 'Contact directory ready!' : 'Done!';
         await slackClient.chat.postMessage({
           channel,
           thread_ts: threadTs,
-          text: `:white_check_mark: Done!\n\n${answer.slice(0, 2000)}\n\nSaved to:\n\`${outPath}\``,
+          text: `:white_check_mark: ${doneTitle}\n\n${slackPreview.slice(0, 2500)}\n\nFull document:\n\`${outPath}\``,
         });
       } else {
         await slackClient.chat.postMessage({

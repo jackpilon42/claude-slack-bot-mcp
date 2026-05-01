@@ -52,19 +52,38 @@ function findProjectFolder(projectName) {
 }
 
 /**
- * Lists all supported files in a folder (non-recursive).
+ * Lists all supported files under a project folder (recursive into subfolders).
+ * Skips .zip archives and Office temp lock files (~$…).
  */
 const SUPPORTED_EXTENSIONS = ['.pdf', '.xlsx', '.xls', '.csv', '.docx', '.doc', '.txt'];
 
 function listProjectFiles(folderPath) {
   if (!fs.existsSync(folderPath)) return [];
-  return fs
-    .readdirSync(folderPath)
-    .filter((f) => {
-      const ext = path.extname(f).toLowerCase();
-      return SUPPORTED_EXTENSIONS.includes(ext) && !f.startsWith('~$'); // skip temp Office files
-    })
-    .map((f) => path.join(folderPath, f));
+  const out = [];
+
+  function walk(dir) {
+    let entries;
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(fullPath);
+        continue;
+      }
+      const name = entry.name;
+      if (name.startsWith('~$')) continue;
+      const ext = path.extname(name).toLowerCase();
+      if (ext === '.zip') continue;
+      if (SUPPORTED_EXTENSIONS.includes(ext)) out.push(fullPath);
+    }
+  }
+
+  walk(folderPath);
+  return out.sort();
 }
 
 /**

@@ -3482,6 +3482,17 @@ app.post('/slack/events', async (req, res) => {
       });
     }
 
+    if (shouldHandleAsProposalPipeline(userText, { channel: event.channel, threadTs: replyThreadTs })) {
+      await postSlackWorkStartedIfNeeded();
+      await handleProposalPipeline(userText, {
+        slackClient: slack,
+        channel: event.channel,
+        threadTs: replyThreadTs,
+        anthropicClient: client,
+      });
+      return;
+    }
+
     const threadTsEarly = replyThreadTs;
     const publicBidsHint = startSlackSlowWorkHintTimer({
       channel: event.channel,
@@ -3637,16 +3648,6 @@ app.post('/slack/events', async (req, res) => {
             return;
           }
         }
-      }
-      if (shouldHandleAsProposalPipeline(userText, { channel: event.channel, threadTs: replyThreadTs })) {
-        await postSlackWorkStartedIfNeeded();
-        await handleProposalPipeline(userText, {
-          slackClient: slack,
-          channel: event.channel,
-          threadTs: replyThreadTs,
-          anthropicClient: client,
-        });
-        return;
       }
       await postSlackWorkStartedIfNeeded();
       const bcDiscoverReply = await handleBuildingConnectedDiscoveryAnswer(userText, { threadPriorBlock });

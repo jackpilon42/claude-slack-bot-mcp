@@ -29,7 +29,10 @@
     "docx": "^9.6.1",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "mammoth": "^1.12.0",
     "openai": "^6.3.0",
-    "playwright": "^1.52.0"
+    "pdf-parse": "^2.4.5",
+    "playwright": "^1.52.0",
+    "xlsx": "^0.18.5"
   }
 }

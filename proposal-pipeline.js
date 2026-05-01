@@ -26,6 +26,16 @@ const {
   TableLayoutType,
   convertInchesToTwip,
 } = require('docx');
+const {
+  findProjectFolder,
+  listProjectFiles,
+  findFileByName,
+  readFile,
+  readAllFilesInFolder,
+  formatFileListForSlack,
+  detectFileReference,
+  detectProjectNameReference,
+} = require('./file-ingestor');
 
 function getProposalsOutputDir() {
   return process.env.PROPOSALS_OUTPUT_DIR || path.join(os.homedir(), 'Downloads', 'transform-proposals');
@@ -65,6 +75,8 @@ const EXPLICIT_PROPOSAL =
   /\b(?:generate|create|make|write|build|draft)\b[\s\S]{0,80}\b(?:proposal|bid|quote|estimate)\b|\b(?:proposal|bid|quote|estimate)\b[\s\S]{0,80}\b(?:generate|create|make|write|build|draft)\b/i;
 
 const pendingProposalByThread = new Map();
+/** @type {Map<string, { folderPath: string, files: string[], baseUserText: string, createdAtMs: number }>} */
+const pendingFileIngestByThread = new Map();
 const PENDING_TTL_MS = 24 * 60 * 60 * 1000;
 
 function threadKey(channel, threadTs) {
@@ -101,6 +113,16 @@ function shouldHandleAsProposalPipeline(text, ctx = {}) {
   const ch = ctx.channel;
   const ts = ctx.threadTs;
   const key = threadKey(ch, ts);
+
+  const pendingFile = pendingFileIngestByThread.get(key);
+  if (pendingFile) {
+    if (Date.now() - pendingFile.createdAtMs > PENDING_TTL_MS) {
+      pendingFileIngestByThread.delete(key);
+    } else if (looksLikeConfirmation(t) || detectFileReference(t)) {
+      return true;
+    }
+  }
+
   const pending = pendingProposalByThread.get(key);
   if (pending && looksLikeConfirmation(t)) {
     if (Date.now() - pending.createdAtMs > PENDING_TTL_MS) {
@@ -797,13 +819,62 @@ async function postSlackText(slackClient, channel, threadTs, text) {
 async function handleProposalPipeline(userText, { slackClient, channel, threadTs, anthropicClient }) {
   const key = threadKey(channel, threadTs);
   let effectiveText = String(userText || '').trim();
-  const pending = pendingProposalByThread.get(key);
+  let fileIngestJustCompleted = false;
 
   try {
-    if (pending && looksLikeConfirmation(effectiveText)) {
+    const pendingFiles = pendingFileIngestByThread.get(key);
+    if (pendingFiles) {
+      if (Date.now() - pendingFiles.createdAtMs > PENDING_TTL_MS) {
+        pendingFileIngestByThread.delete(key);
+      } else if (looksLikeConfirmation(effectiveText)) {
+        const blob = await readAllFilesInFolder(pendingFiles.folderPath);
+        effectiveText = `${pendingFiles.baseUserText}\n\n--- Ingested project files ---\n\n${blob}`;
+        pendingFileIngestByThread.delete(key);
+        fileIngestJustCompleted = true;
+      } else if (detectFileReference(effectiveText)) {
+        const fname = detectFileReference(effectiveText);
+        let fp = null;
+        for (const f of pendingFiles.files) {
+          if (path.basename(f).toLowerCase().includes(fname.toLowerCase())) {
+            fp = f;
+            break;
+          }
+        }
+        if (!fp) fp = findFileByName(fname);
+        if (fp) {
+          const blob = await readFile(fp);
+          effectiveText = `${pendingFiles.baseUserText}\n\n--- Ingested single file ---\n\n${blob}`;
+        } else {
+          await postSlackText(
+            slackClient,
+            channel,
+            threadTs,
+            `:x: Could not find a file matching *${fname}*. Reply *yes* for all listed files, or \`use file <name>\` with a partial filename.`
+          );
+          return 'ERROR';
+        }
+        pendingFileIngestByThread.delete(key);
+        fileIngestJustCompleted = true;
+      } else {
+        await postSlackText(
+          slackClient,
+          channel,
+          threadTs,
+          `:hourglass_flowing_sand: Reply *yes* to ingest every listed file, or \`use file <filename>\` for one file.`
+        );
+        return 'AWAITING_FILE_CHOICE';
+      }
+    }
+
+    const pending = pendingProposalByThread.get(key);
+    if (pending && looksLikeConfirmation(effectiveText) && !fileIngestJustCompleted) {
       effectiveText = pending.sourceText;
       pendingProposalByThread.delete(key);
-    } else if (!looksLikeExplicitProposalRequest(effectiveText) && looksLikePastedOpportunity(effectiveText)) {
+    } else if (
+      !fileIngestJustCompleted &&
+      !looksLikeExplicitProposalRequest(effectiveText) &&
+      looksLikePastedOpportunity(effectiveText)
+    ) {
       pendingProposalByThread.set(key, { sourceText: effectiveText, createdAtMs: Date.now() });
       await postSlackText(
         slackClient,
@@ -812,6 +883,33 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
         `:clipboard: I can draft a full Transform Energy proposal from this opportunity.\n\nWant me to generate it? Reply *yes* or *approve* in this thread.`
       );
       return 'AWAITING_CONFIRMATION';
+    }
+
+    const alreadyHasIngested =
+      effectiveText.includes('--- Ingested project files ---') ||
+      effectiveText.includes('--- Ingested single file ---');
+    if (
+      !fileIngestJustCompleted &&
+      !alreadyHasIngested &&
+      looksLikeExplicitProposalRequest(effectiveText)
+    ) {
+      const projName = detectProjectNameReference(effectiveText);
+      if (projName) {
+        const folder = findProjectFolder(projName);
+        if (folder) {
+          const files = listProjectFiles(folder);
+          if (files.length > 0) {
+            pendingFileIngestByThread.set(key, {
+              folderPath: folder,
+              files,
+              baseUserText: effectiveText,
+              createdAtMs: Date.now(),
+            });
+            await postSlackText(slackClient, channel, threadTs, formatFileListForSlack(folder, files));
+            return 'AWAITING_FILE_CHOICE';
+          }
+        }
+      }
     }
 
     await postSlackText(
@@ -861,6 +959,7 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
       `:x: Proposal pipeline failed: ${String(err?.message || err).slice(0, 2500)}`
     );
     pendingProposalByThread.delete(key);
+    pendingFileIngestByThread.delete(key);
     return 'ERROR';
   }
 }

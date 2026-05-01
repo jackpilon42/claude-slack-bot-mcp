@@ -856,6 +856,89 @@ async function generateHumanTasksPDF(folderPath, projectName, tasks) {
   console.log(`[smart-docs] Human tasks instructions saved: ${outPath}`);
 }
 
+async function fillHDGBidForm(filePath, projectDetails, proposalContent, _anthropicClient) {
+  const XLSX = require('xlsx');
+  const wb = XLSX.readFile(filePath);
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+  const today = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
+  const setCell = (r, c, val, type = 's') => {
+    const addr = XLSX.utils.encode_cell({ r, c });
+    ws[addr] = type === 'n' ? { t: 'n', v: val } : { t: 's', v: String(val) };
+  };
+
+  setCell(7, 1, 'Transform Energy');
+  setCell(8, 1, today);
+
+  const lineItems = proposalContent.lineItems || [];
+  const scopeMap = {};
+  for (const div of lineItems) {
+    for (const item of div.items || []) {
+      const desc = String(item.description || '').toLowerCase().trim();
+      if (!desc) continue;
+      const tc = Number(item.totalCost);
+      if (Number.isFinite(tc)) scopeMap[desc] = tc;
+    }
+  }
+
+  const transformScopes = [
+    'electrical',
+    'lighting',
+    'led',
+    'conduit',
+    'site lighting',
+    'roofing',
+    'tpo',
+    'metal roof',
+    'insulation',
+    'solar',
+    'pv',
+    'battery',
+  ];
+
+  for (let r = 13; r <= 77; r++) {
+    const row = data[r];
+    if (!row) continue;
+    const scopeLabel = (String(row[0] || '') + ' ' + String(row[1] || '')).toLowerCase().trim();
+    if (!scopeLabel) continue;
+
+    const doesScope = transformScopes.some((s) => scopeLabel.includes(s));
+
+    if (doesScope) {
+      setCell(r, 2, 'YES');
+      let cost = 0;
+      const words = scopeLabel.split(/\s+/).filter((w) => w.length > 3);
+      for (const [desc, c] of Object.entries(scopeMap)) {
+        if (words.some((w) => desc.includes(w))) {
+          cost = c;
+          break;
+        }
+      }
+      if (cost > 0) setCell(r, 5, cost, 'n');
+    } else if (scopeLabel.length > 2) {
+      setCell(r, 2, 'NO');
+    }
+  }
+
+  let maxR = 77;
+  let maxC = 5;
+  const curRef = ws['!ref'];
+  if (curRef) {
+    const rng = XLSX.utils.decode_range(curRef);
+    maxR = Math.max(maxR, rng.e.r);
+    maxC = Math.max(maxC, rng.e.c);
+  }
+  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
+
+  const ext = path.extname(filePath);
+  const base = path.basename(filePath, ext);
+  const outPath = path.join(path.dirname(filePath), `${base}_Transform Energy_filled${ext}`);
+  XLSX.writeFile(wb, outPath);
+  console.log('[smart-docs] Filled HDG bid form:', outPath);
+  return outPath;
+}
+
 async function handleSmartDocuments(folderPath, projectDetails, proposalContent, anthropicClient) {
   const XLSX = require('xlsx');
   const files = fs
@@ -944,6 +1027,21 @@ async function handleSmartDocuments(folderPath, projectDetails, proposalContent,
       }
     } catch (err) {
       console.error(`[smart-docs] Excel error ${filePath}:`, err.message);
+    }
+  }
+
+  // HDG / breakdown bid forms (pattern-specific fill)
+  for (const filePath of files) {
+    const name = path.basename(filePath).toUpperCase();
+    if (
+      path.extname(filePath).toLowerCase() === '.xlsx' &&
+      (name.includes('HDG') || name.includes('REQUIRED') || name.includes('BREAKDOWN'))
+    ) {
+      try {
+        await fillHDGBidForm(filePath, projectDetails, proposalContent, anthropicClient);
+      } catch (err) {
+        console.error(`[smart-docs] HDG form error ${filePath}:`, err.message);
+      }
     }
   }
 

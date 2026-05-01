@@ -856,87 +856,66 @@ async function generateHumanTasksPDF(folderPath, projectName, tasks) {
   console.log(`[smart-docs] Human tasks instructions saved: ${outPath}`);
 }
 
-async function fillHDGBidForm(filePath, projectDetails, proposalContent, _anthropicClient) {
-  const XLSX = require('xlsx');
-  const wb = XLSX.readFile(filePath);
-  const ws = wb.Sheets[wb.SheetNames[0]];
-  const data = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+async function fillHDGBidForm(filePath, projectDetails, proposalContent) {
+  const { execFile } = require('child_process');
+  const { promisify } = require('util');
+  const execFileAsync = promisify(execFile);
 
   const today = new Date().toLocaleDateString('en-US', { month: '2-digit', day: '2-digit', year: 'numeric' });
-  const setCell = (r, c, val, type = 's') => {
-    const addr = XLSX.utils.encode_cell({ r, c });
-    ws[addr] = type === 'n' ? { t: 'n', v: val } : { t: 's', v: String(val) };
-  };
-
-  setCell(7, 1, 'Transform Energy');
-  setCell(8, 1, today);
-
-  const lineItems = proposalContent.lineItems || [];
-  const scopeMap = {};
-  for (const div of lineItems) {
-    for (const item of div.items || []) {
-      const desc = String(item.description || '').toLowerCase().trim();
-      if (!desc) continue;
-      const tc = Number(item.totalCost);
-      if (Number.isFinite(tc)) scopeMap[desc] = tc;
-    }
-  }
-
-  const transformScopes = [
-    'electrical',
-    'lighting',
-    'led',
-    'conduit',
-    'site lighting',
-    'roofing',
-    'tpo',
-    'metal roof',
-    'insulation',
-    'solar',
-    'pv',
-    'battery',
-  ];
-
-  for (let r = 13; r <= 77; r++) {
-    const row = data[r];
-    if (!row) continue;
-    const scopeLabel = (String(row[0] || '') + ' ' + String(row[1] || '')).toLowerCase().trim();
-    if (!scopeLabel) continue;
-
-    const doesScope = transformScopes.some((s) => scopeLabel.includes(s));
-
-    if (doesScope) {
-      setCell(r, 2, 'YES');
-      let cost = 0;
-      const words = scopeLabel.split(/\s+/).filter((w) => w.length > 3);
-      for (const [desc, c] of Object.entries(scopeMap)) {
-        if (words.some((w) => desc.includes(w))) {
-          cost = c;
-          break;
-        }
-      }
-      if (cost > 0) setCell(r, 5, cost, 'n');
-    } else if (scopeLabel.length > 2) {
-      setCell(r, 2, 'NO');
-    }
-  }
-
-  let maxR = 77;
-  let maxC = 5;
-  const curRef = ws['!ref'];
-  if (curRef) {
-    const rng = XLSX.utils.decode_range(curRef);
-    maxR = Math.max(maxR, rng.e.r);
-    maxC = Math.max(maxC, rng.e.c);
-  }
-  ws['!ref'] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
-
   const ext = path.extname(filePath);
   const base = path.basename(filePath, ext);
-  const outPath = path.join(path.dirname(filePath), `${base}_Transform Energy_filled${ext}`);
-  XLSX.writeFile(wb, outPath);
-  console.log('[smart-docs] Filled HDG bid form:', outPath);
-  return outPath;
+  const outPath = path.join(path.dirname(filePath), `${base}_Transform_Energy_filled${ext}`);
+
+  const teKeywords = ['electrical', 'lighting', 'conduit', 'solar', 'pv', 'roofing', 'tpo', 'metal roof', 'insulation', 'led', 'low volt'];
+
+  const pythonScript = `
+from openpyxl import load_workbook
+from datetime import date
+import json
+
+wb = load_workbook(${JSON.stringify(filePath)})
+ws = wb.active
+
+# Fill header fields
+ws['B8'] = ${JSON.stringify('Transform Energy')}
+ws['B9'] = ${JSON.stringify(today)}
+
+te_keywords = ${JSON.stringify(teKeywords)}
+
+# Fill YES/NO for each scope row based on B column content
+for row in ws.iter_rows(min_row=14, max_row=ws.max_row):
+    b_cell = row[1] if len(row) > 1 else None
+    c_cell = row[2] if len(row) > 2 else None
+    if not b_cell or not b_cell.value or not c_cell:
+        continue
+    label = str(b_cell.value).lower().strip()
+    if not label or label.startswith('only if'):
+        continue
+    is_te_scope = any(kw in label for kw in te_keywords)
+    if c_cell.value is None or str(c_cell.value).strip() == '':
+        c_cell.value = 'YES' if is_te_scope else 'NO'
+
+wb.save(${JSON.stringify(outPath)})
+print('saved:', ${JSON.stringify(outPath)})
+`;
+
+  const scriptPath = path.join(os.tmpdir(), 'fill_hdg.py');
+  fs.writeFileSync(scriptPath, pythonScript);
+
+  try {
+    const { stdout } = await execFileAsync('python3', [scriptPath], { timeout: 30000 });
+    console.log('[smart-docs] HDG form filled:', stdout.trim());
+    return outPath;
+  } catch (err) {
+    console.error('[smart-docs] HDG fill error:', err.message);
+    return null;
+  } finally {
+    try {
+      fs.unlinkSync(scriptPath);
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 async function handleSmartDocuments(folderPath, projectDetails, proposalContent, anthropicClient) {
@@ -1038,7 +1017,7 @@ async function handleSmartDocuments(folderPath, projectDetails, proposalContent,
       (name.includes('HDG') || name.includes('REQUIRED') || name.includes('BREAKDOWN'))
     ) {
       try {
-        await fillHDGBidForm(filePath, projectDetails, proposalContent, anthropicClient);
+        await fillHDGBidForm(filePath, projectDetails, proposalContent);
       } catch (err) {
         console.error(`[smart-docs] HDG form error ${filePath}:`, err.message);
       }

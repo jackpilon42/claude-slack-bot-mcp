@@ -307,9 +307,10 @@ function tableThinBorders() {
   return { top: b, bottom: b, left: b, right: b, insideHorizontal: b, insideVertical: b };
 }
 
-async function buildDocx(projectDetails, proposalContent, outputDir) {
+async function buildDocx(projectDetails, proposalContent, outputDir, options = {}) {
   const safeProjectName = safeFileSegment(projectDetails.projectName || 'Transform-Proposal');
-  const projectDir = path.join(outputDir, safeProjectName);
+  const baseOut = path.resolve(String(outputDir || '').trim() || getProposalsOutputDir());
+  const projectDir = options.useOutputDirAsProjectDir ? baseOut : path.join(baseOut, safeProjectName);
   fs.mkdirSync(projectDir, { recursive: true });
   const docxPath = path.join(projectDir, `${safeProjectName}-proposal.docx`);
 
@@ -820,6 +821,8 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
   const key = threadKey(channel, threadTs);
   let effectiveText = String(userText || '').trim();
   let fileIngestJustCompleted = false;
+  let proposalOutputDir = getProposalsOutputDir();
+  let useProjectFolderForDocx = false;
 
   try {
     const pendingFiles = pendingFileIngestByThread.get(key);
@@ -827,10 +830,13 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
       if (Date.now() - pendingFiles.createdAtMs > PENDING_TTL_MS) {
         pendingFileIngestByThread.delete(key);
       } else if (looksLikeConfirmation(effectiveText)) {
-        const blob = await readAllFilesInFolder(pendingFiles.folderPath);
+        const folderPath = pendingFiles.folderPath;
+        const blob = await readAllFilesInFolder(folderPath);
         effectiveText = `${pendingFiles.baseUserText}\n\n--- Ingested project files ---\n\n${blob}`;
         pendingFileIngestByThread.delete(key);
         fileIngestJustCompleted = true;
+        proposalOutputDir = folderPath;
+        useProjectFolderForDocx = true;
       } else if (detectFileReference(effectiveText)) {
         const fname = detectFileReference(effectiveText);
         let fp = null;
@@ -855,6 +861,8 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
         }
         pendingFileIngestByThread.delete(key);
         fileIngestJustCompleted = true;
+        proposalOutputDir = pendingFiles.folderPath;
+        useProjectFolderForDocx = true;
       } else {
         await postSlackText(
           slackClient,
@@ -866,28 +874,10 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
       }
     }
 
-    const pending = pendingProposalByThread.get(key);
-    if (pending && looksLikeConfirmation(effectiveText) && !fileIngestJustCompleted) {
-      effectiveText = pending.sourceText;
-      pendingProposalByThread.delete(key);
-    } else if (
-      !fileIngestJustCompleted &&
-      !looksLikeExplicitProposalRequest(effectiveText) &&
-      looksLikePastedOpportunity(effectiveText)
-    ) {
-      pendingProposalByThread.set(key, { sourceText: effectiveText, createdAtMs: Date.now() });
-      await postSlackText(
-        slackClient,
-        channel,
-        threadTs,
-        `:clipboard: I can draft a full Transform Energy proposal from this opportunity.\n\nWant me to generate it? Reply *yes* or *approve* in this thread.`
-      );
-      return 'AWAITING_CONFIRMATION';
-    }
-
     const alreadyHasIngested =
       effectiveText.includes('--- Ingested project files ---') ||
       effectiveText.includes('--- Ingested single file ---');
+
     if (
       !fileIngestJustCompleted &&
       !alreadyHasIngested &&
@@ -910,6 +900,25 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
           }
         }
       }
+    }
+
+    const pending = pendingProposalByThread.get(key);
+    if (pending && looksLikeConfirmation(effectiveText) && !fileIngestJustCompleted) {
+      effectiveText = pending.sourceText;
+      pendingProposalByThread.delete(key);
+    } else if (
+      !fileIngestJustCompleted &&
+      !looksLikeExplicitProposalRequest(effectiveText) &&
+      looksLikePastedOpportunity(effectiveText)
+    ) {
+      pendingProposalByThread.set(key, { sourceText: effectiveText, createdAtMs: Date.now() });
+      await postSlackText(
+        slackClient,
+        channel,
+        threadTs,
+        `:clipboard: I can draft a full Transform Energy proposal from this opportunity.\n\nWant me to generate it? Reply *yes* or *approve* in this thread.`
+      );
+      return 'AWAITING_CONFIRMATION';
     }
 
     await postSlackText(
@@ -936,7 +945,8 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
     const { docxPath, projectDir, safeProjectName } = await buildDocx(
       projectDetails,
       proposalContent,
-      getProposalsOutputDir()
+      proposalOutputDir,
+      { useOutputDirAsProjectDir: useProjectFolderForDocx }
     );
     const pdfPath = convertToPdf(docxPath, projectDir);
     await postProposalToSlack(

@@ -213,13 +213,22 @@ function detectFileReference(text) {
 
 /**
  * Detects "generate proposal for <project name>" pattern.
- * Returns the project name string or null.
+ * Uses the first line only (Slack often appends newlines). Trims trailing quotes / punctuation.
  */
 function detectProjectNameReference(text) {
-  const match = text.match(
-    /\b(?:generate|create|make|write|build|draft)\s+(?:a\s+)?(?:proposal|bid|quote|estimate)\s+(?:for|on)\s+["']?([^"'\n]+?)["']?\s*$/i
+  const first = String(text || '')
+    .trim()
+    .split(/\r?\n/)[0]
+    .trim();
+  const match = first.match(
+    /\b(?:generate|create|make|write|build|draft)\s+(?:a\s+)?(?:proposal|bid|quote|estimate)\s+(?:for|on)\s+["']?([^"'\n]+?)["']?(?:[.,;:!?]+)?\s*$/i
   );
-  return match ? match[1].trim() : null;
+  if (!match) return null;
+  return match[1]
+    .trim()
+    .replace(/^["']|["']$/g, '')
+    .replace(/[.,;:!?]+$/g, '')
+    .trim() || null;
 }
 
 // ─── Exports ──────────────────────────────────────────────────────────────────

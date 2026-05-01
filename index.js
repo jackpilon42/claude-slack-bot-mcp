@@ -7,6 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { AsyncLocalStorage } = require('async_hooks');
 require('dotenv').config();
+const { shouldHandleAsProposalPipeline, handleProposalPipeline } = require('./proposal-pipeline');
 
 const app = express();
 app.use(
@@ -3636,6 +3637,16 @@ app.post('/slack/events', async (req, res) => {
             return;
           }
         }
+      }
+      if (shouldHandleAsProposalPipeline(userText, { channel: event.channel, threadTs: replyThreadTs })) {
+        await postSlackWorkStartedIfNeeded();
+        await handleProposalPipeline(userText, {
+          slackClient: slack,
+          channel: event.channel,
+          threadTs: replyThreadTs,
+          anthropicClient: client,
+        });
+        return;
       }
       await postSlackWorkStartedIfNeeded();
       const bcDiscoverReply = await handleBuildingConnectedDiscoveryAnswer(userText, { threadPriorBlock });

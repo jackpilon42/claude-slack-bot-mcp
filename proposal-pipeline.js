@@ -818,6 +818,7 @@ async function postSlackText(slackClient, channel, threadTs, text) {
 }
 
 async function handleProposalPipeline(userText, { slackClient, channel, threadTs, anthropicClient }) {
+  console.log('[proposal-pipeline] handleProposalPipeline called with: ' + String(userText || '').slice(0, 80));
   const key = threadKey(channel, threadTs);
   let effectiveText = String(userText || '').trim();
   let fileIngestJustCompleted = false;
@@ -881,7 +882,7 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
     if (
       !fileIngestJustCompleted &&
       !alreadyHasIngested &&
-      looksLikeExplicitProposalRequest(effectiveText)
+      looksLikeProposalRequest(effectiveText)
     ) {
       const projName = detectProjectNameReference(effectiveText);
       if (projName) {

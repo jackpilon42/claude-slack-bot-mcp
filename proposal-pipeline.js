@@ -35,6 +35,7 @@ const {
   formatFileListForSlack,
   detectFileReference,
   detectProjectNameReference,
+  detectProjectFileQuestion,
 } = require('./file-ingestor');
 
 function getProposalsOutputDir() {
@@ -131,6 +132,7 @@ function shouldHandleAsProposalPipeline(text, ctx = {}) {
     }
     return true;
   }
+  if (detectProjectFileQuestion(t)) return true;
   return looksLikeProposalRequest(t);
 }
 
@@ -821,11 +823,50 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
   console.log('[proposal-pipeline] handleProposalPipeline called with: ' + String(userText || '').slice(0, 80));
   const key = threadKey(channel, threadTs);
   let effectiveText = String(userText || '').trim();
+  console.log('[proposal-pipeline] effectiveText first 120:', effectiveText.slice(0, 120));
   let fileIngestJustCompleted = false;
   let proposalOutputDir = getProposalsOutputDir();
   let useProjectFolderForDocx = false;
 
   try {
+    const projectQaName = detectProjectFileQuestion(effectiveText);
+    if (projectQaName) {
+      const folderPath = findProjectFolder(projectQaName);
+      if (folderPath) {
+        await postSlackText(
+          slackClient,
+          channel,
+          threadTs,
+          `:mag: Reading project documents for *${projectQaName}* and answering your question...`
+        );
+        const docsText = await readAllFilesInFolder(folderPath);
+        if (!docsText || !docsText.trim()) {
+          await postSlackText(
+            slackClient,
+            channel,
+            threadTs,
+            `:warning: I found the project folder for *${projectQaName}*, but I could not extract readable text from its supported files.`
+          );
+          return 'PROJECT_QA_EMPTY';
+        }
+        const qaMsg = await anthropicClient.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 1200,
+          system:
+            "You are a construction document analyst. Answer the user's question based only on the provided project documents. Be specific — cite which document contains the answer.",
+          messages: [
+            {
+              role: 'user',
+              content: `Project folder: ${folderPath}\n\nUser question:\n${effectiveText}\n\nProject documents text:\n${docsText}`,
+            },
+          ],
+        });
+        const qaAnswer = extractAssistantText(qaMsg) || 'I could not find enough information in the provided documents to answer that question.';
+        await postSlackText(slackClient, channel, threadTs, qaAnswer.slice(0, 39000));
+        return 'PROJECT_QA';
+      }
+    }
+
     const pendingFiles = pendingFileIngestByThread.get(key);
     if (pendingFiles) {
       if (Date.now() - pendingFiles.createdAtMs > PENDING_TTL_MS) {
@@ -879,12 +920,25 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
       effectiveText.includes('--- Ingested project files ---') ||
       effectiveText.includes('--- Ingested single file ---');
 
+    console.log('[pp] fileIngestJustCompleted:', fileIngestJustCompleted);
+    console.log('[pp] alreadyHasIngested:', alreadyHasIngested);
+    console.log('[pp] looksLikeProposalRequest:', looksLikeProposalRequest(effectiveText));
+    const projName = detectProjectNameReference(effectiveText);
+    console.log('[pp] detectProjectNameReference:', projName);
+    console.log('[pp] findProjectFolder:', projName ? findProjectFolder(projName) : null);
+    console.log(
+      '[pp] listProjectFiles count:',
+      (() => {
+        const f = projName ? findProjectFolder(projName) : null;
+        return f ? listProjectFiles(f).length : 'no folder';
+      })()
+    );
+
     if (
       !fileIngestJustCompleted &&
       !alreadyHasIngested &&
       looksLikeProposalRequest(effectiveText)
     ) {
-      const projName = detectProjectNameReference(effectiveText);
       if (projName) {
         const folder = findProjectFolder(projName);
         if (folder) {

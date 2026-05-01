@@ -370,6 +370,23 @@ function slackPlainTextFromBlocks(event) {
 }
 
 /**
+ * Plain user message text: Slack often repeats the same words in `event.text` and Block Kit /
+ * rich_text blocks. Joining both blindly duplicates the message; merge so each phrase appears once.
+ */
+function slackUserMessagePlainText(event) {
+  const textRaw = String(event.text || '').trim();
+  const blocksRaw = String(slackPlainTextFromBlocks(event) || '').trim();
+  if (!blocksRaw) return normalizeSlackText(textRaw);
+  if (!textRaw) return normalizeSlackText(blocksRaw);
+  const a = normalizeSlackText(textRaw);
+  const b = normalizeSlackText(blocksRaw);
+  if (a === b) return a;
+  if (b.length >= 8 && a.includes(b)) return a;
+  if (a.length >= 8 && b.includes(a)) return b;
+  return normalizeSlackText(`${textRaw} ${blocksRaw}`.trim());
+}
+
+/**
  * Thread target for outbound replies. Local signed tests set `_local_post_to_channel` because the
  * synthetic `ts` is not a real Slack message — threading under it hides replies from the main timeline.
  */
@@ -3397,8 +3414,7 @@ app.post('/slack/events', async (req, res) => {
   try {
     const replyThreadTs = slackReplyThreadTs(event);
     const audioFile = (event.files || []).find(isAudioSlackFile);
-    const rawIncoming = [event.text, slackPlainTextFromBlocks(event)].filter(Boolean).join(' ');
-    let userText = normalizeSlackText(rawIncoming);
+    let userText = slackUserMessagePlainText(event);
 
     if (audioFile) {
       const privateUrl = audioFile.url_private_download || audioFile.url_private;

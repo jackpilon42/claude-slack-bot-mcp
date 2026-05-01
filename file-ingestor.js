@@ -26,11 +26,82 @@ const PROJECT_BASE_DIR =
 
 // ─── Directory helpers ────────────────────────────────────────────────────────
 
+/** Lowercase, strip spaces and punctuation — for similarity / retail normalization. */
+function normalizeComparable(name) {
+  return String(name || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+
+/** Common retail spellings after `normalizeComparable` (hyphens/spaces already removed). */
+function normalizeRetailSpelling(comp) {
+  if (!comp) return '';
+  let s = comp;
+  s = s.replace(/penney/g, 'penny');
+  s = s.replace(/walmarts/g, 'walmart');
+  return s;
+}
+
+/**
+ * Extra spellings for fuzzy match: trailing …ey vs …y (Penney/Penny style) and reverse.
+ */
+function spellingVariantsForComparable(comp) {
+  const base = normalizeRetailSpelling(comp);
+  const out = new Set([base]);
+  if (base.length >= 5 && base.endsWith('ey')) {
+    out.add(base.slice(0, -2) + 'y');
+  }
+  if (base.length >= 5 && base.endsWith('y') && !base.endsWith('ey')) {
+    out.add(base.slice(0, -1) + 'ey');
+  }
+  return [...out];
+}
+
+function levenshtein(a, b) {
+  const m = a.length;
+  const n = b.length;
+  if (m === 0) return n;
+  if (n === 0) return m;
+  let prev = new Array(n + 1);
+  let cur = new Array(n + 1);
+  for (let j = 0; j <= n; j++) prev[j] = j;
+  for (let i = 1; i <= m; i++) {
+    cur[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a.charCodeAt(i - 1) === b.charCodeAt(j - 1) ? 0 : 1;
+      cur[j] = Math.min(cur[j - 1] + 1, prev[j] + 1, prev[j - 1] + cost);
+    }
+    const t = prev;
+    prev = cur;
+    cur = t;
+  }
+  return prev[n];
+}
+
+/** Best similarity in [0,1] across spelling variants; uses normalized Levenshtein (1 - dist/maxLen). */
+function bestNameSimilarity(queryName, folderName) {
+  const qNorm = normalizeComparable(queryName);
+  const fNorm = normalizeComparable(folderName);
+  const qVars = spellingVariantsForComparable(qNorm);
+  const fVars = spellingVariantsForComparable(fNorm);
+  let best = 0;
+  for (const q of qVars) {
+    for (const f of fVars) {
+      const maxLen = Math.max(q.length, f.length);
+      if (maxLen < 4) continue;
+      const sim = 1 - levenshtein(q, f) / maxLen;
+      if (sim > best) best = sim;
+    }
+  }
+  return best;
+}
+
 /**
  * Returns the full path to a project folder by fuzzy-matching the project name.
  * e.g. "Shelter Cove" matches ~/Downloads/transform-projects/Shelter Cove/
  */
 function findProjectFolder(projectName) {
+  if (!projectName || !String(projectName).trim()) return null;
   if (!fs.existsSync(PROJECT_BASE_DIR)) return null;
 
   const entries = fs.readdirSync(PROJECT_BASE_DIR, { withFileTypes: true });
@@ -47,6 +118,19 @@ function findProjectFolder(projectName) {
     (f) => f.toLowerCase().includes(lower) || lower.includes(f.toLowerCase())
   );
   if (partial) return path.join(PROJECT_BASE_DIR, partial);
+
+  // Fuzzy: retail spelling + …ey/…y variants + ≥80% character similarity (normalized Levenshtein)
+  const MIN_SIM = 0.8;
+  let bestFolder = null;
+  let bestScore = 0;
+  for (const f of folders) {
+    const score = bestNameSimilarity(projectName, f);
+    if (score >= MIN_SIM && score > bestScore) {
+      bestScore = score;
+      bestFolder = f;
+    }
+  }
+  if (bestFolder) return path.join(PROJECT_BASE_DIR, bestFolder);
 
   return null;
 }
@@ -112,9 +196,9 @@ function findFileByName(fileName) {
 // ─── File readers ─────────────────────────────────────────────────────────────
 
 async function readPdf(filePath) {
-  const pdfParse = require('pdf-parse');
-  const buffer = fs.readFileSync(filePath);
-  const data = await pdfParse(buffer);
+  const { PDFParse } = require('pdf-parse');
+  const parser = new PDFParse({ verbosity: 0, url: filePath });
+  const data = await parser.getText();
   return `[PDF: ${path.basename(filePath)}]\n${data.text}`;
 }
 
@@ -231,6 +315,40 @@ function detectProjectNameReference(text) {
     .trim() || null;
 }
 
+function looksLikeQuestionText(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (/[?]\s*$/.test(t)) return true;
+  return /\b(which|what|where|when|how|find|does|is)\b/i.test(t);
+}
+
+/**
+ * Detects project-file question intent by matching a known project folder name
+ * in a question-like user message. Returns matched project folder name or null.
+ */
+function detectProjectFileQuestion(text) {
+  if (!looksLikeQuestionText(text)) return null;
+  if (!fs.existsSync(PROJECT_BASE_DIR)) return null;
+  const entries = fs.readdirSync(PROJECT_BASE_DIR, { withFileTypes: true });
+  const folders = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  if (folders.length === 0) return null;
+
+  const lower = String(text || '').toLowerCase();
+  const normText = normalizeComparable(text);
+
+  let best = null;
+  for (const folder of folders) {
+    const folderLower = folder.toLowerCase();
+    const folderNorm = normalizeComparable(folder);
+    const exactish = lower.includes(folderLower);
+    const normContains = folderNorm.length >= 4 && normText.includes(folderNorm);
+    if (exactish || normContains) {
+      if (!best || folder.length > best.length) best = folder;
+    }
+  }
+  return best;
+}
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -243,5 +361,6 @@ module.exports = {
   formatFileListForSlack,
   detectFileReference,
   detectProjectNameReference,
+  detectProjectFileQuestion,
   SUPPORTED_EXTENSIONS,
 };

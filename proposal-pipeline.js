@@ -247,7 +247,47 @@ Project: ${JSON.stringify(projectDetails).slice(0, 6000)}`;
     max_tokens: 4000,
     messages: [{ role: 'user', content: prompt }],
   });
-  return parseJsonFromModelText(extractAssistantText(msg));
+  const proposalContent = parseJsonFromModelText(extractAssistantText(msg));
+
+  // Timeline validation/correction: keep dates in the future and internally consistent.
+  const today = new Date();
+
+  function parseFlexibleDate(str) {
+    if (!str) return null;
+    const d = new Date(str);
+    return Number.isNaN(d.getTime()) ? null : d;
+  }
+
+  function addWeeks(date, weeks) {
+    const d = new Date(date);
+    d.setDate(d.getDate() + weeks * 7);
+    return d;
+  }
+
+  function formatDate(date) {
+    return date.toISOString().split('T')[0];
+  }
+
+  if (proposalContent.timeline) {
+    const t = proposalContent.timeline;
+    let startDate = parseFlexibleDate(t.startDate);
+    const durationWeeks = Number(t.durationWeeks) > 0 ? Number(t.durationWeeks) : 8;
+
+    // If start date is in the past or missing, anchor to next Monday from today.
+    if (!startDate || startDate < today) {
+      const nextMonday = new Date(today);
+      const day = nextMonday.getDay();
+      const daysUntilMonday = day === 0 ? 1 : ((8 - day) % 7 || 7);
+      nextMonday.setDate(nextMonday.getDate() + daysUntilMonday);
+      startDate = nextMonday;
+    }
+
+    t.startDate = formatDate(startDate);
+    t.durationWeeks = durationWeeks;
+    t.completionDate = formatDate(addWeeks(startDate, durationWeeks));
+  }
+
+  return proposalContent;
 }
 
 function safeFileSegment(name) {
@@ -744,6 +784,205 @@ async function buildDocx(projectDetails, proposalContent, outputDir, options = {
   return { docxPath, projectDir, safeProjectName };
 }
 
+async function generateHumanTasksPDF(folderPath, projectName, tasks) {
+  const children = [
+    new Paragraph({
+      heading: HeadingLevel.HEADING_1,
+      children: [
+        new TextRun({
+          text: `${projectName} — Human Task Instructions`,
+          bold: true,
+          size: 32,
+          font: 'Arial',
+        }),
+      ],
+      spacing: { after: 320 },
+    }),
+    new Paragraph({
+      children: [
+        new TextRun({
+          text: 'The following tasks require manual completion by a team member.',
+          size: 22,
+          font: 'Arial',
+          italics: true,
+        }),
+      ],
+      spacing: { after: 400 },
+    }),
+  ];
+
+  tasks.forEach((task, i) => {
+    children.push(
+      new Paragraph({
+        heading: HeadingLevel.HEADING_2,
+        children: [
+          new TextRun({
+            text: `Step ${i + 1}: ${task.task || 'Task'}`,
+            bold: true,
+            size: 26,
+            font: 'Arial',
+          }),
+        ],
+        spacing: { before: 320, after: 120 },
+      })
+    );
+    if (task.item) children.push(new Paragraph({ children: [new TextRun({ text: `• Item: ${task.item}`, size: 22, font: 'Arial' })] }));
+    if (task.destination) children.push(new Paragraph({ children: [new TextRun({ text: `• Destination: ${task.destination}`, size: 22, font: 'Arial' })] }));
+    if (task.contact) children.push(new Paragraph({ children: [new TextRun({ text: `• Contact: ${task.contact}`, size: 22, font: 'Arial' })] }));
+    if (task.deadline) children.push(new Paragraph({ children: [new TextRun({ text: `• Deadline: ${task.deadline}`, size: 22, font: 'Arial' })] }));
+    children.push(new Paragraph({ spacing: { after: 200 } }));
+  });
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: {
+          page: {
+            size: { width: 12240, height: 15840 },
+            margin: { top: 1440, right: 1440, bottom: 1440, left: 1440 },
+          },
+        },
+        children,
+      },
+    ],
+  });
+
+  const safeProjectName = String(projectName || 'project')
+    .replace(/[^a-zA-Z0-9-_ ]/g, '')
+    .replace(/\s+/g, '-');
+  const outPath = path.join(folderPath, `${safeProjectName}-Instructions.docx`);
+  const buffer = await Packer.toBuffer(doc);
+  fs.writeFileSync(outPath, buffer);
+  console.log(`[smart-docs] Human tasks instructions saved: ${outPath}`);
+}
+
+async function handleSmartDocuments(folderPath, projectDetails, proposalContent, anthropicClient) {
+  const XLSX = require('xlsx');
+  const files = fs
+    .readdirSync(folderPath, { withFileTypes: true })
+    .filter((f) => !f.isDirectory())
+    .map((f) => path.join(folderPath, f.name));
+
+  const knownData = {
+    projectName: projectDetails.projectName,
+    projectAddress: projectDetails.projectAddress,
+    city: projectDetails.city,
+    state: projectDetails.state,
+    ownerOrGC: projectDetails.ownerOrGC,
+    contactName: projectDetails.contactName,
+    contactEmail: projectDetails.contactEmail,
+    totalContractPrice: proposalContent.totalContractPrice,
+    startDate: proposalContent.timeline?.startDate,
+    completionDate: proposalContent.timeline?.completionDate,
+    durationWeeks: proposalContent.timeline?.durationWeeks,
+    companyName: 'Transform Energy',
+    companyPhone: '209.606.0191',
+    companyEmail: 'Todd.filbrun@transformenergy.com',
+    companyLicense: 'Lic. #1063970',
+    ceoName: 'Todd Filbrun',
+  };
+
+  const humanTasks = [];
+
+  // A) Auto-fill Excel files
+  for (const filePath of files) {
+    const ext = path.extname(filePath).toLowerCase();
+    if (!['.xlsx', '.xls'].includes(ext)) continue;
+
+    try {
+      const wb = XLSX.readFile(filePath);
+      let modified = false;
+
+      for (const sheetName of wb.SheetNames) {
+        const ws = wb.Sheets[sheetName];
+        const range = XLSX.utils.decode_range(ws['!ref'] || 'A1:Z100');
+
+        for (let R = range.s.r; R <= range.e.r; R++) {
+          for (let C = range.s.c; C <= range.e.c; C++) {
+            const cellAddr = XLSX.utils.encode_cell({ r: R, c: C });
+            const cell = ws[cellAddr];
+            if (!cell || cell.t !== 's') continue;
+            const val = String(cell.v || '').toLowerCase().trim();
+
+            const fieldMap = {
+              'contractor name': knownData.companyName,
+              subcontractor: knownData.companyName,
+              contractor: knownData.companyName,
+              license: knownData.companyLicense,
+              'license number': knownData.companyLicense,
+              'contact name': knownData.ceoName,
+              contact: knownData.ceoName,
+              phone: knownData.companyPhone,
+              email: knownData.companyEmail,
+              'start date': knownData.startDate,
+              'completion date': knownData.completionDate,
+              'project name': knownData.projectName,
+              'project address': knownData.projectAddress,
+              'total price': knownData.totalContractPrice?.toString(),
+              'bid amount': knownData.totalContractPrice?.toString(),
+            };
+
+            for (const [pattern, fillValue] of Object.entries(fieldMap)) {
+              if (val.includes(pattern) && fillValue) {
+                const nextAddr = XLSX.utils.encode_cell({ r: R, c: C + 1 });
+                const nextCell = ws[nextAddr];
+                if (!nextCell || !nextCell.v) {
+                  ws[nextAddr] = { t: 's', v: fillValue };
+                  modified = true;
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (modified) {
+        const baseName = path.basename(filePath, ext);
+        const outPath = path.join(folderPath, `${baseName}_filled${ext}`);
+        XLSX.writeFile(wb, outPath);
+        console.log(`[smart-docs] Filled Excel: ${outPath}`);
+      }
+    } catch (err) {
+      console.error(`[smart-docs] Excel error ${filePath}:`, err.message);
+    }
+  }
+
+  // B) Use Claude to identify human tasks from all docs
+  try {
+    const { readAllFilesInFolder } = require('./file-ingestor');
+    const extractedText = await readAllFilesInFolder(folderPath);
+
+    const taskResponse = await anthropicClient.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 1500,
+      system: `You are analyzing project documents for a construction subcontractor (Transform Energy).
+Identify any tasks that require a human to physically complete — things like:
+mailing documents to a location, delivering items, signing and returning forms, attending a pre-bid meeting, obtaining a bond or insurance certificate, submitting a physical form by mail.
+Return ONLY valid JSON array:
+[{ "task": "description", "item": "what needs to be sent/done", "destination": "where it goes", "contact": "contact name and info if available", "deadline": "deadline if mentioned" }]
+Return empty array [] if no human physical tasks found.`,
+      messages: [
+        {
+          role: 'user',
+          content: `Project: ${projectDetails.projectName}\n\n${extractedText.slice(0, 40000)}`,
+        },
+      ],
+    });
+
+    const raw = taskResponse.content.find((b) => b.type === 'text')?.text || '[]';
+    const clean = raw.replace(/```json|```/g, '').trim();
+    const tasks = JSON.parse(clean);
+    if (Array.isArray(tasks)) humanTasks.push(...tasks);
+  } catch (err) {
+    console.error('[smart-docs] Task extraction error:', err.message);
+  }
+
+  // C) Generate human task instructions PDF
+  if (humanTasks.length > 0) {
+    await generateHumanTasksPDF(folderPath, projectDetails.projectName, humanTasks);
+  }
+}
+
 function convertToPdf(docxPath, projectDir) {
   const candidates = [
     '/Applications/LibreOffice.app/Contents/MacOS/soffice',
@@ -1003,6 +1242,16 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
       proposalOutputDir,
       { useOutputDirAsProjectDir: useProjectFolderForDocx }
     );
+
+    // Run smart document handling if we have a project folder
+    if (proposalOutputDir && useProjectFolderForDocx) {
+      try {
+        await handleSmartDocuments(proposalOutputDir, projectDetails, proposalContent, anthropicClient);
+      } catch (err) {
+        console.error('[smart-docs] Error:', err.message);
+      }
+    }
+
     const pdfPath = convertToPdf(docxPath, projectDir);
     await postProposalToSlack(
       slackClient,

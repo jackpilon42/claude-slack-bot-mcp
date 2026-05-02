@@ -201,10 +201,46 @@ function findFileByName(fileName) {
 // ─── File readers ─────────────────────────────────────────────────────────────
 
 async function readPdf(filePath) {
-  const { PDFParse } = require('pdf-parse');
-  const parser = new PDFParse({ verbosity: 0, url: filePath });
-  const data = await parser.getText();
-  return `[PDF: ${path.basename(filePath)}]\n${data.text}`;
+  const basename = path.basename(filePath);
+  let text = '';
+  try {
+    const { PDFParse } = require('pdf-parse');
+    const parser = new PDFParse({ verbosity: 0, url: filePath });
+    const data = await parser.getText();
+    text = String(data?.text || '');
+  } catch {
+    text = '';
+  }
+
+  const compactLen = text.replace(/\s+/g, ' ').trim().length;
+  if (compactLen < 120) {
+    const tmpOut = path.join(os.tmpdir(), `pdftxt-${process.pid}-${Date.now()}-${basename.replace(/[^a-zA-Z0-9._-]/g, '_')}.txt`);
+    try {
+      await execFileAsync('pdftotext', ['-layout', '-nopgbrk', filePath, tmpOut], {
+        timeout: 180000,
+        maxBuffer: 50 * 1024 * 1024,
+      });
+      if (fs.existsSync(tmpOut)) {
+        const fallback = fs.readFileSync(tmpOut, 'utf8');
+        if (fallback.replace(/\s+/g, ' ').trim().length > compactLen) {
+          text = fallback;
+        }
+      }
+    } catch {
+      /* keep pdf-parse text */
+    } finally {
+      try {
+        if (fs.existsSync(tmpOut)) fs.unlinkSync(tmpOut);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
+  const body =
+    (text || '').trim() ||
+    '(minimal or no text layer — vector/scanned title blocks may only appear in page images.)';
+  return `[PDF: ${basename}]\n${body}`;
 }
 
 async function readExcel(filePath) {
@@ -282,12 +318,20 @@ async function readAllFilesInFolder(folderPath) {
 async function rasterizePdfPages(filePath, maxPages = 3, dpi = 100) {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdfpages-'));
   const prefix = path.join(tmpDir, 'page');
+  const baseArgs = ['-jpeg', '-r', String(dpi), '-f', '1', '-l', String(maxPages)];
   try {
-    await execFileAsync(
-      'pdftoppm',
-      ['-jpeg', '-r', String(dpi), '-f', '1', '-l', String(maxPages), filePath, prefix],
-      { timeout: 60000 }
-    );
+    try {
+      await execFileAsync(
+        'pdftoppm',
+        [...baseArgs, '-scale-to', '2048', filePath, prefix],
+        { timeout: 120000, maxBuffer: 64 * 1024 * 1024 }
+      );
+    } catch (e1) {
+      await execFileAsync('pdftoppm', [...baseArgs, filePath, prefix], {
+        timeout: 120000,
+        maxBuffer: 64 * 1024 * 1024,
+      });
+    }
     let files = fs.readdirSync(tmpDir).filter((f) => f.endsWith('.jpg'));
     files.sort((a, b) => {
       const na = parseInt(String(a).replace(/\D/g, ''), 10) || 0;
@@ -311,7 +355,7 @@ async function rasterizePdfPages(filePath, maxPages = 3, dpi = 100) {
     fs.rmdirSync(tmpDir);
     return images;
   } catch (err) {
-    console.error('[pdf-rasterize] error:', err.message);
+    console.error('[pdf-rasterize]', path.basename(filePath), err.message);
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {
@@ -337,7 +381,14 @@ async function readAllFilesWithVision(folderPath, options = {}) {
   const { maxImagesPerPdf = 3, maxTotalImages = 12, imageDpi = 100 } = options;
   const text = await readAllFilesInFolder(folderPath);
   const allImages = [];
-  const pdfs = listProjectFiles(folderPath).filter((fp) => fp.toLowerCase().endsWith('.pdf'));
+  let pdfs = listProjectFiles(folderPath).filter((fp) => fp.toLowerCase().endsWith('.pdf'));
+  pdfs.sort((a, b) => {
+    try {
+      return fs.statSync(a).size - fs.statSync(b).size;
+    } catch {
+      return 0;
+    }
+  });
   for (const pdfPath of pdfs) {
     if (allImages.length >= maxTotalImages) break;
     const remaining = maxTotalImages - allImages.length;

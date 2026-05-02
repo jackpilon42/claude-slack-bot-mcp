@@ -158,6 +158,27 @@ function parseJsonFromModelText(raw) {
   return JSON.parse(s);
 }
 
+/** Best-effort parse of model output into a contact JSON array (handles markdown fences / preamble). */
+function parseContactJsonArray(raw) {
+  let s = String(raw || '')
+    .replace(/```json\s*/gi, '')
+    .replace(/```/g, '')
+    .trim();
+  try {
+    const arr = JSON.parse(s);
+    return Array.isArray(arr) ? arr : null;
+  } catch {
+    const m = s.match(/\[[\s\S]*\]/);
+    if (!m) return null;
+    try {
+      const arr = JSON.parse(m[0]);
+      return Array.isArray(arr) ? arr : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
 async function extractProjectDetails(userText, anthropicClient) {
   const prompt = `You are extracting structured project data from a construction bid opportunity pasted in Slack (may include URLs, ITB text, scope snippets).
 
@@ -1184,12 +1205,18 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
         return null;
       }
       const { text: extractedText, images } = await readAllFilesWithVision(folderPath, {
-        maxImagesPerPdf: 3,
-        maxTotalImages: 12,
-        imageDpi: 100,
+        maxImagesPerPdf: 2,
+        maxTotalImages: 16,
+        imageDpi: 96,
       });
+      const pdfCount = listProjectFiles(folderPath).filter((f) => f.toLowerCase().endsWith('.pdf')).length;
+      console.log(
+        `[doc-task] folder=${folderPath} pdfCount=${pdfCount} images=${images.length} textChars=${extractedText.length}`
+      );
       const projectName = path.basename(folderPath);
       const isContactTask = /contact|directory|roles|info\s+for\s+every|info\s+sheet|phone|email/i.test(effectiveText);
+      const wantOutputDoc =
+        isContactTask || /pdf|docx|\bdoc\b|word|spreadsheet|excel|sheet\b/i.test(effectiveText);
 
       const systemPrompt = isContactTask
         ? `You are extracting a contact directory from construction project documents. Be EXHAUSTIVE — search drawing title blocks, spec cover pages, geotech reports, bid forms, and any other source. Return contacts ordered by importance:
@@ -1217,17 +1244,33 @@ Return ONLY a JSON array. Each contact: { "role": "...", "company": "...", "name
         text: `User request: ${effectiveText}\n\nProject documents (text extraction):\n${extractedText.slice(0, 70000)}`,
       });
 
-      const taskResponse = await anthropicClient.messages.create({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 4000,
-        system: systemPrompt,
-        messages: [{ role: 'user', content: userContent }],
-      });
+      let taskResponse;
+      try {
+        taskResponse = await anthropicClient.messages.create({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 4000,
+          system: systemPrompt,
+          messages: [{ role: 'user', content: userContent }],
+        });
+      } catch (apiErr) {
+        console.error('[doc-task] Claude API error:', apiErr?.message || apiErr);
+        await slackClient.chat.postMessage({
+          channel,
+          thread_ts: threadTs,
+          text: `:x: Could not analyze documents (${String(apiErr?.message || apiErr).slice(0, 500)}). If this mentions image size or payload, try fewer/smaller PDFs or ensure Poppler \`pdftoppm\` produces JPEGs (\`brew install poppler\`).`,
+        });
+        return null;
+      }
 
       let answer = taskResponse.content.find((b) => b.type === 'text')?.text || '';
       if (!answer.trim()) answer = 'No information found.';
 
-      if (/pdf|doc/i.test(effectiveText)) {
+      const visionHint =
+        pdfCount > 0 && images.length === 0
+          ? '\n_Note: No PDF page previews were generated (Poppler `pdftoppm` missing or raster failed). Text-only._\n'
+          : '';
+
+      if (wantOutputDoc) {
         const taskLabel = effectiveText
           .slice(0, 60)
           .replace(/[^a-zA-Z0-9 ]/g, '')
@@ -1261,12 +1304,9 @@ Return ONLY a JSON array. Each contact: { "role": "...", "company": "...", "name
         ];
 
         if (isContactTask) {
-          let contacts = [];
-          try {
-            const cleaned = answer.replace(/```json|```/g, '').trim();
-            contacts = JSON.parse(cleaned);
-          } catch (e) {
-            console.error('[doc-task] JSON parse error, falling back to plain text:', e.message);
+          const contacts = parseContactJsonArray(answer);
+          if (!contacts) {
+            console.error('[doc-task] Could not parse contact JSON; falling back to plain text in DOCX');
           }
 
           if (Array.isArray(contacts) && contacts.length > 0) {
@@ -1344,24 +1384,19 @@ Return ONLY a JSON array. Each contact: { "role": "...", "company": "...", "name
 
         let slackPreview = answer;
         if (isContactTask) {
-          try {
-            const cleaned = answer.replace(/```json|```/g, '').trim();
-            const contactsSlack = JSON.parse(cleaned);
-            if (Array.isArray(contactsSlack)) {
-              slackPreview = contactsSlack
-                .slice(0, 10)
-                .map((c) => {
-                  const lines = [`*${c.role || 'Contact'}*`];
-                  if (c.company) lines.push(c.company);
-                  if (c.name) lines.push(`${c.name}${c.title ? ', ' + c.title : ''}`);
-                  if (c.phone) lines.push(`📞 ${c.phone}`);
-                  if (c.email) lines.push(`✉️ ${c.email}`);
-                  return lines.join('\n');
-                })
-                .join('\n\n');
-            }
-          } catch {
-            /* keep slackPreview as answer */
+          const contactsSlack = parseContactJsonArray(answer);
+          if (Array.isArray(contactsSlack) && contactsSlack.length > 0) {
+            slackPreview = contactsSlack
+              .slice(0, 10)
+              .map((c) => {
+                const lines = [`*${c.role || 'Contact'}*`];
+                if (c.company) lines.push(c.company);
+                if (c.name) lines.push(`${c.name}${c.title ? ', ' + c.title : ''}`);
+                if (c.phone) lines.push(`📞 ${c.phone}`);
+                if (c.email) lines.push(`✉️ ${c.email}`);
+                return lines.join('\n');
+              })
+              .join('\n\n');
           }
         }
 
@@ -1369,7 +1404,7 @@ Return ONLY a JSON array. Each contact: { "role": "...", "company": "...", "name
         await slackClient.chat.postMessage({
           channel,
           thread_ts: threadTs,
-          text: `:white_check_mark: ${doneTitle}\n\n${slackPreview.slice(0, 2500)}\n\nFull document:\n\`${outPath}\``,
+          text: `:white_check_mark: ${doneTitle}\n\n${slackPreview.slice(0, 2500)}${visionHint}\nFull document:\n\`${outPath}\``,
         });
       } else {
         await slackClient.chat.postMessage({

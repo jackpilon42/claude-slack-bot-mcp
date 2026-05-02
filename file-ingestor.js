@@ -17,8 +17,13 @@
 
 'use strict';
 
-const fs   = require('fs');
+const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+
+const execFileAsync = promisify(execFile);
 
 const PROJECT_BASE_DIR =
   process.env.TRANSFORM_PROJECTS_DIR ||
@@ -270,6 +275,80 @@ async function readAllFilesInFolder(folderPath) {
   return combined.slice(0, 80000); // ~80k chars is safe for Claude context
 }
 
+/**
+ * Rasterize the first N pages of a PDF to JPEG (requires `pdftoppm`, e.g. poppler).
+ * Returns { data: base64, media_type, filename }[] for Claude vision.
+ */
+async function rasterizePdfPages(filePath, maxPages = 3, dpi = 100) {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdfpages-'));
+  const prefix = path.join(tmpDir, 'page');
+  try {
+    await execFileAsync(
+      'pdftoppm',
+      ['-jpeg', '-r', String(dpi), '-f', '1', '-l', String(maxPages), filePath, prefix],
+      { timeout: 60000 }
+    );
+    let files = fs.readdirSync(tmpDir).filter((f) => f.endsWith('.jpg'));
+    files.sort((a, b) => {
+      const na = parseInt(String(a).replace(/\D/g, ''), 10) || 0;
+      const nb = parseInt(String(b).replace(/\D/g, ''), 10) || 0;
+      return na - nb;
+    });
+    files = files.map((f) => path.join(tmpDir, f));
+    const baseName = path.basename(filePath);
+    const images = files.map((f) => ({
+      data: fs.readFileSync(f).toString('base64'),
+      media_type: 'image/jpeg',
+      filename: baseName,
+    }));
+    for (const f of files) {
+      try {
+        fs.unlinkSync(f);
+      } catch {
+        /* ignore */
+      }
+    }
+    fs.rmdirSync(tmpDir);
+    return images;
+  } catch (err) {
+    console.error('[pdf-rasterize] error:', err.message);
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
+    return [];
+  }
+}
+
+/**
+ * Text from `readPdf` plus rasterized page images for one PDF.
+ */
+async function readPdfWithVision(filePath, options = {}) {
+  const { maxPages = 3, dpi = 100 } = options;
+  const [text, images] = await Promise.all([readPdf(filePath), rasterizePdfPages(filePath, maxPages, dpi)]);
+  return { text, images };
+}
+
+/**
+ * Full-folder text via `readAllFilesInFolder` plus JPEGs from the first pages of every PDF (up to caps).
+ */
+async function readAllFilesWithVision(folderPath, options = {}) {
+  const { maxImagesPerPdf = 3, maxTotalImages = 12, imageDpi = 100 } = options;
+  const text = await readAllFilesInFolder(folderPath);
+  const allImages = [];
+  const pdfs = listProjectFiles(folderPath).filter((fp) => fp.toLowerCase().endsWith('.pdf'));
+  for (const pdfPath of pdfs) {
+    if (allImages.length >= maxTotalImages) break;
+    const remaining = maxTotalImages - allImages.length;
+    const nPages = Math.min(maxImagesPerPdf, remaining);
+    if (nPages <= 0) break;
+    const pages = await rasterizePdfPages(pdfPath, nPages, imageDpi);
+    allImages.push(...pages);
+  }
+  return { text, images: allImages };
+}
+
 // ─── Slack helpers ────────────────────────────────────────────────────────────
 
 /**
@@ -366,6 +445,9 @@ module.exports = {
   findFileByName,
   readFile,
   readAllFilesInFolder,
+  rasterizePdfPages,
+  readPdfWithVision,
+  readAllFilesWithVision,
   formatFileListForSlack,
   detectFileReference,
   detectProjectNameReference,

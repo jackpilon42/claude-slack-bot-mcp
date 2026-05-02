@@ -32,6 +32,7 @@ const {
   findFileByName,
   readFile,
   readAllFilesInFolder,
+  readAllFilesWithVision,
   formatFileListForSlack,
   detectFileReference,
   detectProjectNameReference,
@@ -1182,49 +1183,45 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
         });
         return null;
       }
-      const extractedText = await readAllFilesInFolder(folderPath);
+      const { text: extractedText, images } = await readAllFilesWithVision(folderPath, {
+        maxImagesPerPdf: 3,
+        maxTotalImages: 12,
+        imageDpi: 100,
+      });
       const projectName = path.basename(folderPath);
       const isContactTask = /contact|directory|roles|info\s+for\s+every|info\s+sheet|phone|email/i.test(effectiveText);
 
-      let systemPrompt;
-      let userMessage;
-      if (isContactTask) {
-        systemPrompt = `You are extracting a contact directory from construction project documents. Be EXHAUSTIVE — search EVERY document including:
-- Drawing title blocks (architects, engineers, surveyors, civil/structural/MEP designers)
-- Specifications cover pages and contact lists
-- Geotech reports (geotechnical engineers, lab contacts)
-- Bid forms and prequalification forms
-- Subcontracts and addenda
-- Owner/Client info (the most important — they are the company commissioning the work)
-- General Contractor info
-- Any consultant, vendor, or representative mentioned
-
-Return contacts as a JSON array, ORDERED BY IMPORTANCE:
-1. OWNER / CLIENT (e.g., AutoZone Construction) — ALWAYS FIRST
+      const systemPrompt = isContactTask
+        ? `You are extracting a contact directory from construction project documents. Be EXHAUSTIVE — search drawing title blocks, spec cover pages, geotech reports, bid forms, and any other source. Return contacts ordered by importance:
+1. OWNER / CLIENT (always first)
 2. GENERAL CONTRACTOR
 3. ARCHITECT
-4. CIVIL ENGINEER
-5. STRUCTURAL ENGINEER
-6. MEP ENGINEERS
-7. GEOTECHNICAL ENGINEER
-8. LANDSCAPE ARCHITECT
-9. SURVEYOR
-10. Any other consultants, inspectors, or vendors
+4. CIVIL / STRUCTURAL / MEP / GEOTECH ENGINEERS
+5. OTHER CONSULTANTS / VENDORS
 
-Each contact: { "role": "...", "company": "...", "name": "...", "title": "...", "address": "...", "phone": "...", "email": "..." }
-Use null for missing fields. Return ONLY the JSON array, no other text.`;
-        userMessage = `Extract every contact from these ${projectName} project documents:\n\n${extractedText.slice(0, 80000)}`;
-      } else {
-        systemPrompt =
-          'You are a construction document analyst. Answer the user request based ONLY on the provided project documents. Be thorough and specific.';
-        userMessage = `User request: ${effectiveText}\n\nProject documents:\n${extractedText.slice(0, 60000)}`;
+Return ONLY a JSON array. Each contact: { "role": "...", "company": "...", "name": "...", "title": "...", "address": "...", "phone": "...", "email": "..." }. Use null for missing fields.`
+        : images.length > 0
+          ? `You are a construction document analyst. The images above are pages from project PDFs (drawings, specs, reports). Read them carefully — title blocks, schedules, notes, and details often contain critical info that text extraction misses. Combine the visual information with the text below to give a thorough, specific answer.`
+          : 'You are a construction document analyst. Answer the user request based ONLY on the provided project documents (text extraction). Be thorough and specific.';
+
+      const userContent = [];
+      for (const img of images) {
+        if (!img?.data) continue;
+        userContent.push({
+          type: 'image',
+          source: { type: 'base64', media_type: img.media_type || 'image/jpeg', data: img.data },
+        });
       }
+      userContent.push({
+        type: 'text',
+        text: `User request: ${effectiveText}\n\nProject documents (text extraction):\n${extractedText.slice(0, 70000)}`,
+      });
 
       const taskResponse = await anthropicClient.messages.create({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 4000,
         system: systemPrompt,
-        messages: [{ role: 'user', content: userMessage }],
+        messages: [{ role: 'user', content: userContent }],
       });
 
       let answer = taskResponse.content.find((b) => b.type === 'text')?.text || '';

@@ -1211,7 +1211,7 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
         maxImagesPerPdf: 2,
         maxTotalImages: isContactTask ? 24 : 16,
         imageDpi: 96,
-        maxTextChars: isContactTask ? 100000 : 80000,
+        maxTextChars: isContactTask ? 180000 : 80000,
       });
       const pdfCount = listProjectFiles(folderPath).filter((f) => f.toLowerCase().endsWith('.pdf')).length;
       console.log(
@@ -1224,7 +1224,7 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
         ? `You are extracting a CONTACT DIRECTORY from construction project documents (PDFs, Word, spreadsheets, extracted text, and page images). Be EXHAUSTIVE.
 
 WHERE TO LOOK
-Drawing title blocks, spec cover pages and division 00 / procurement sections, geotech and report cover sheets, bid forms, submittal transmittals, RFI headers, addenda, contracts, org charts, letterhead, signature blocks, tables, and footer/contact strips.
+The text bundle lists **Excel / CSV / Word / .txt files first**, then PDFs — mine **every** tabular and narrative block for contacts (do not skip spreadsheets). Then: drawing title blocks, spec cover pages and division 00 / procurement sections, geotech and report cover sheets, bid forms, submittal transmittals, RFI headers, addenda, contracts, org charts, letterhead, signature blocks, tables, and footer/contact strips.
 
 HOW TO DECIDE "IS THIS A CONTACT?" (no fixed name list — infer from context)
 Include a separate JSON object whenever formatting or proximity ties a PLAUSIBLE PERSON NAME or ORGANIZATION NAME to one or more STRONG CONTACT SIGNALS:
@@ -1270,14 +1270,14 @@ Short text lines name the source PDF file and page number before each page image
       }
       userContent.push({
         type: 'text',
-        text: `User request: ${effectiveText}\n\nProject documents (text extraction):\n${extractedText.slice(0, 70000)}`,
+        text: `User request: ${effectiveText}\n\nProject documents (text extraction):\n${extractedText.slice(0, isContactTask ? 120000 : 70000)}`,
       });
 
       let taskResponse;
       try {
         taskResponse = await anthropicClient.messages.create({
           model: 'claude-sonnet-4-20250514',
-          max_tokens: 4000,
+          max_tokens: isContactTask ? 10000 : 4000,
           system: systemPrompt,
           messages: [{ role: 'user', content: userContent }],
         });

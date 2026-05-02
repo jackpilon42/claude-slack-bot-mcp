@@ -373,14 +373,34 @@ function sortFilesForContactRead(files) {
   });
 }
 
+/** For contact TEXT ingest: spreadsheets & Word first (so they are not truncated away), then PDFs by planset priority. */
+function sortFilesForContactTextIngest(files) {
+  const tabular = [];
+  const pdfs = [];
+  const other = [];
+  for (const f of files) {
+    const e = path.extname(f).toLowerCase();
+    if (['.xlsx', '.xls', '.csv', '.docx', '.doc', '.txt'].includes(e)) {
+      tabular.push(f);
+    } else if (e === '.pdf') {
+      pdfs.push(f);
+    } else {
+      other.push(f);
+    }
+  }
+  tabular.sort((a, b) => path.basename(a).localeCompare(path.basename(b)));
+  const pdfSorted = sortFilesForContactRead(pdfs);
+  return [...tabular, ...pdfSorted, ...other];
+}
+
 /**
  * Reads all supported files in a folder and returns combined extracted text.
- * Truncates to maxChars (default ~80k). Optional contactReadOrder boosts plansets/specs before the slice cuts off huge sets.
+ * Truncates to maxChars (default ~80k). Optional contactReadOrder: tabular docs first, then PDFs (planset-friendly).
  */
 async function readAllFilesInFolder(folderPath, maxChars = 80000, readOpts = {}) {
   let files = listProjectFiles(folderPath);
   if (readOpts.contactReadOrder) {
-    files = sortFilesForContactRead(files);
+    files = sortFilesForContactTextIngest(files);
   }
   const parts = [];
   for (const f of files) {

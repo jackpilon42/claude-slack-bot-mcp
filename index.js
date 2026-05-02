@@ -309,7 +309,7 @@ User: "Change Bid Out to Bid Accepted for the Boston job" -> update: find the ro
 User: "What is in column 3 row 1" -> read_cell, read: { column_index: 3, row_number: 1 }, high confidence.`;
 
 /** Bumped when shipping notable behavior changes; echoed by /health/slack. */
-const AGENT_CODE_BUILD = 'transform-sim-mcp-v15-doc-task-pdf-vision-contact';
+const AGENT_CODE_BUILD = 'transform-sim-mcp-v16-contact-cover-pdf-breadth';
 
 function fetchTimeoutSignal(ms) {
   if (typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function') {

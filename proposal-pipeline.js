@@ -1204,17 +1204,19 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
         });
         return null;
       }
+      const projectName = path.basename(folderPath);
+      const isContactTask = /contact|directory|roles|info\s+for\s+every|info\s+sheet|phone|email/i.test(effectiveText);
       const { text: extractedText, images } = await readAllFilesWithVision(folderPath, {
+        contactCoverPages: isContactTask,
         maxImagesPerPdf: 2,
-        maxTotalImages: 16,
+        maxTotalImages: isContactTask ? 24 : 16,
         imageDpi: 96,
+        maxTextChars: isContactTask ? 100000 : 80000,
       });
       const pdfCount = listProjectFiles(folderPath).filter((f) => f.toLowerCase().endsWith('.pdf')).length;
       console.log(
-        `[doc-task] folder=${folderPath} pdfCount=${pdfCount} images=${images.length} textChars=${extractedText.length}`
+        `[doc-task] folder=${folderPath} pdfCount=${pdfCount} images=${images.length} textChars=${extractedText.length} contactCover=${isContactTask}`
       );
-      const projectName = path.basename(folderPath);
-      const isContactTask = /contact|directory|roles|info\s+for\s+every|info\s+sheet|phone|email/i.test(effectiveText);
       const wantOutputDoc =
         isContactTask || /pdf|docx|\bdoc\b|word|spreadsheet|excel|sheet\b/i.test(effectiveText);
 
@@ -1244,7 +1246,10 @@ ROLE / ORDER (set "role" from best fit; list in this priority)
 OUTPUT
 Return ONLY a JSON array (no markdown, no commentary). Each object:
 { "role": "...", "company": "...", "name": "...", "title": "...", "address": "...", "phone": "...", "email": "...", "license": "..." }
-Use null for unknown fields. If you have a firm signal (phone/email/address/license/title) but an ambiguous personal name, still include the entry with name null and company or role inferred from context.`
+Use null for unknown fields. If you have a firm signal (phone/email/address/license/title) but an ambiguous personal name, still include the entry with name null and company or role inferred from context.
+
+IMAGES
+Short text lines name the source PDF file and page number before each page image — use those labels to attribute contacts to the correct document.`
         : images.length > 0
           ? `You are a construction document analyst. The images above are pages from project PDFs (drawings, specs, reports). Read them carefully — title blocks, schedules, notes, and details often contain critical info that text extraction misses. Combine the visual information with the text below to give a thorough, specific answer.`
           : 'You are a construction document analyst. Answer the user request based ONLY on the provided project documents (text extraction). Be thorough and specific.';
@@ -1252,6 +1257,12 @@ Use null for unknown fields. If you have a firm signal (phone/email/address/lice
       const userContent = [];
       for (const img of images) {
         if (!img?.data) continue;
+        const tag = img.sourcePdf || img.filename || 'PDF';
+        const pl = img.pageLabel ? ` p.${img.pageLabel}` : '';
+        userContent.push({
+          type: 'text',
+          text: `[PDF page image — file: ${tag}${pl}]`,
+        });
         userContent.push({
           type: 'image',
           source: { type: 'base64', media_type: img.media_type || 'image/jpeg', data: img.data },

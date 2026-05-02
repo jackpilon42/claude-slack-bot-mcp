@@ -300,7 +300,7 @@ async function readFile(filePath) {
  * Reads all supported files in a folder and returns combined extracted text.
  * Truncates to ~80,000 chars to stay within Claude's context window.
  */
-async function readAllFilesInFolder(folderPath) {
+async function readAllFilesInFolder(folderPath, maxChars = 80000) {
   const files = listProjectFiles(folderPath);
   const parts = [];
   for (const f of files) {
@@ -308,27 +308,51 @@ async function readAllFilesInFolder(folderPath) {
     if (text) parts.push(text);
   }
   const combined = parts.join('\n\n' + '─'.repeat(60) + '\n\n');
-  return combined.slice(0, 80000); // ~80k chars is safe for Claude context
+  return combined.slice(0, maxChars);
 }
 
 /**
- * Rasterize the first N pages of a PDF to JPEG (requires `pdftoppm`, e.g. poppler).
- * Returns { data: base64, media_type, filename }[] for Claude vision.
+ * Rasterize PDF page range to JPEG (requires `pdftoppm`, e.g. poppler).
+ * @param maxPages page count starting at opts.firstPage (default 1)
+ * @param opts.firstPage 1-based first page; opts.timeoutMs override; opts.skipDpiClamp
+ * Returns { data, media_type, filename, sourcePdf, pageLabel }[] for Claude vision.
  */
-async function rasterizePdfPages(filePath, maxPages = 3, dpi = 100) {
+async function rasterizePdfPages(filePath, maxPages = 3, dpi = 100, opts = {}) {
+  const firstPage = Math.max(1, parseInt(String(opts.firstPage ?? 1), 10) || 1);
+  const n = Math.max(1, parseInt(String(maxPages), 10) || 1);
+  const lastPage = firstPage + n - 1;
+
+  let bytes = 0;
+  try {
+    bytes = fs.statSync(filePath).size;
+  } catch {
+    bytes = 0;
+  }
+  let timeoutMs = Number(opts.timeoutMs);
+  if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) {
+    if (bytes > 80 * 1024 * 1024) timeoutMs = 420000;
+    else if (bytes > 40 * 1024 * 1024) timeoutMs = 300000;
+    else if (bytes > 15 * 1024 * 1024) timeoutMs = 180000;
+    else timeoutMs = 120000;
+  }
+  let dpiUse = dpi;
+  if (!opts.skipDpiClamp && bytes > 45 * 1024 * 1024) {
+    dpiUse = Math.min(dpiUse, 72);
+  }
+
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pdfpages-'));
   const prefix = path.join(tmpDir, 'page');
-  const baseArgs = ['-jpeg', '-r', String(dpi), '-f', '1', '-l', String(maxPages)];
+  const baseArgs = ['-jpeg', '-r', String(dpiUse), '-f', String(firstPage), '-l', String(lastPage)];
   try {
     try {
       await execFileAsync(
         'pdftoppm',
         [...baseArgs, '-scale-to', '2048', filePath, prefix],
-        { timeout: 120000, maxBuffer: 64 * 1024 * 1024 }
+        { timeout: timeoutMs, maxBuffer: 64 * 1024 * 1024 }
       );
     } catch (e1) {
       await execFileAsync('pdftoppm', [...baseArgs, filePath, prefix], {
-        timeout: 120000,
+        timeout: timeoutMs,
         maxBuffer: 64 * 1024 * 1024,
       });
     }
@@ -340,11 +364,17 @@ async function rasterizePdfPages(filePath, maxPages = 3, dpi = 100) {
     });
     files = files.map((f) => path.join(tmpDir, f));
     const baseName = path.basename(filePath);
-    const images = files.map((f) => ({
-      data: fs.readFileSync(f).toString('base64'),
-      media_type: 'image/jpeg',
-      filename: baseName,
-    }));
+    const images = files.map((f) => {
+      const m = path.basename(f).match(/-(\d+)\.jpg$/i);
+      const pageLabel = m ? m[1] : String(firstPage);
+      return {
+        data: fs.readFileSync(f).toString('base64'),
+        media_type: 'image/jpeg',
+        filename: baseName,
+        sourcePdf: baseName,
+        pageLabel,
+      };
+    });
     for (const f of files) {
       try {
         fs.unlinkSync(f);
@@ -370,32 +400,92 @@ async function rasterizePdfPages(filePath, maxPages = 3, dpi = 100) {
  */
 async function readPdfWithVision(filePath, options = {}) {
   const { maxPages = 3, dpi = 100 } = options;
-  const [text, images] = await Promise.all([readPdf(filePath), rasterizePdfPages(filePath, maxPages, dpi)]);
+  const [text, images] = await Promise.all([
+    readPdf(filePath),
+    rasterizePdfPages(filePath, maxPages, dpi, { firstPage: 1 }),
+  ]);
   return { text, images };
 }
 
 /**
- * Full-folder text via `readAllFilesInFolder` plus JPEGs from the first pages of every PDF (up to caps).
+ * Full-folder text via `readAllFilesInFolder` plus JPEGs from PDFs (up to caps).
+ * @param options.contactCoverPages — for contact extraction: page 1 of many PDFs first (title blocks), then optional page 2 pass
  */
 async function readAllFilesWithVision(folderPath, options = {}) {
-  const { maxImagesPerPdf = 3, maxTotalImages = 12, imageDpi = 100 } = options;
-  const text = await readAllFilesInFolder(folderPath);
+  const {
+    maxImagesPerPdf = 3,
+    maxTotalImages = 12,
+    imageDpi = 100,
+    contactCoverPages = false,
+    maxTextChars = 80000,
+  } = options;
+  const text = await readAllFilesInFolder(folderPath, maxTextChars);
   const allImages = [];
   let pdfs = listProjectFiles(folderPath).filter((fp) => fp.toLowerCase().endsWith('.pdf'));
+
+  function priorityScore(p) {
+    const n = path.basename(p).toLowerCase();
+    if (
+      /geotech|spec|addendum|bid|itb|prequal|transmittal|00[-_]|report|proposal|contract|instruction|submittal|cover|directory|form|notice|pre-bid|rfp|rfq/.test(
+        n
+      )
+    ) {
+      return 0;
+    }
+    if (/plan|draw|sheet|arch|struct|civil|mep|survey|landscape|code/.test(n)) return 1;
+    return 2;
+  }
   pdfs.sort((a, b) => {
+    const pa = priorityScore(a);
+    const pb = priorityScore(b);
+    if (pa !== pb) return pa - pb;
     try {
       return fs.statSync(a).size - fs.statSync(b).size;
     } catch {
       return 0;
     }
   });
-  for (const pdfPath of pdfs) {
-    if (allImages.length >= maxTotalImages) break;
-    const remaining = maxTotalImages - allImages.length;
-    const nPages = Math.min(maxImagesPerPdf, remaining);
-    if (nPages <= 0) break;
-    const pages = await rasterizePdfPages(pdfPath, nPages, imageDpi);
-    allImages.push(...pages);
+
+  if (contactCoverPages) {
+    for (const pdfPath of pdfs) {
+      if (allImages.length >= maxTotalImages) break;
+      let bytes = 0;
+      try {
+        bytes = fs.statSync(pdfPath).size;
+      } catch {
+        continue;
+      }
+      const timeoutMs = bytes > 80 * 1024 * 1024 ? 420000 : bytes > 40 * 1024 * 1024 ? 300000 : bytes > 15 * 1024 * 1024 ? 180000 : 120000;
+      let dpiUse = imageDpi;
+      if (bytes > 45 * 1024 * 1024) dpiUse = Math.min(dpiUse, 72);
+      const pages = await rasterizePdfPages(pdfPath, 1, dpiUse, { firstPage: 1, timeoutMs });
+      allImages.push(...pages);
+    }
+    if (maxImagesPerPdf >= 2) {
+      for (const pdfPath of pdfs) {
+        if (allImages.length >= maxTotalImages) break;
+        let bytes = 0;
+        try {
+          bytes = fs.statSync(pdfPath).size;
+        } catch {
+          continue;
+        }
+        const timeoutMs = bytes > 80 * 1024 * 1024 ? 420000 : bytes > 40 * 1024 * 1024 ? 300000 : 180000;
+        let dpiUse = imageDpi;
+        if (bytes > 45 * 1024 * 1024) dpiUse = Math.min(dpiUse, 72);
+        const pages = await rasterizePdfPages(pdfPath, 1, dpiUse, { firstPage: 2, timeoutMs });
+        allImages.push(...pages);
+      }
+    }
+  } else {
+    for (const pdfPath of pdfs) {
+      if (allImages.length >= maxTotalImages) break;
+      const remaining = maxTotalImages - allImages.length;
+      const nPages = Math.min(maxImagesPerPdf, remaining);
+      if (nPages <= 0) break;
+      const pages = await rasterizePdfPages(pdfPath, nPages, imageDpi, { firstPage: 1 });
+      allImages.push(...pages);
+    }
   }
   return { text, images: allImages };
 }

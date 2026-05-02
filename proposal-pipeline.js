@@ -179,6 +179,114 @@ function parseContactJsonArray(raw) {
   }
 }
 
+function normalizeHonorificName(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/\b(mr|mrs|ms|dr)\.?/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function phoneDigits10(s) {
+  const d = String(s || '').replace(/\D/g, '');
+  if (d.length < 10) return '';
+  return d.slice(-10);
+}
+
+/** Short stable org token for dedupe keys (e.g. autozone family). */
+function companyDedupeTag(s) {
+  const t = String(s || '').toLowerCase();
+  if (/autozone/.test(t)) return 'autozone';
+  const parts = t
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()
+    .split(/\s+/)
+    .filter((w) => w && !/^(inc|llc|corp|ltd|co|company|the|of|parts?)$/i.test(w));
+  return parts.slice(0, 3).join(' ') || t.slice(0, 28).trim();
+}
+
+function contactDedupeKey(c) {
+  const em = String(c.email || '')
+    .toLowerCase()
+    .trim();
+  if (em) return `e:${em}`;
+  const ph = phoneDigits10(c.phone);
+  const nm = normalizeHonorificName(c.name || '');
+  const co = companyDedupeTag(c.company || '');
+  if (ph) {
+    if (nm) return `p:${ph}:n:${nm}`;
+    if (co) return `p:${ph}:c:${co}`;
+    return `p:${ph}`;
+  }
+  const cn = `${co}|${nm}`.trim();
+  if (co || nm) return `cn:${cn}`;
+  return `raw:${JSON.stringify(c).slice(0, 120)}`;
+}
+
+function contactFieldScore(c) {
+  return ['phone', 'email', 'company', 'name', 'address', 'license', 'title', 'role'].filter((k) => {
+    const v = c[k];
+    return v != null && String(v).trim() !== '';
+  }).length;
+}
+
+function mergeContactPrefer(a, b) {
+  const primary = contactFieldScore(a) >= contactFieldScore(b) ? a : b;
+  const secondary = primary === a ? b : a;
+  const merged = { ...primary };
+  for (const k of ['phone', 'email', 'company', 'name', 'address', 'license', 'title', 'role']) {
+    if ((merged[k] == null || String(merged[k]).trim() === '') && secondary[k] != null && String(secondary[k]).trim()) {
+      merged[k] = secondary[k];
+    }
+  }
+  return merged;
+}
+
+/** Same org + phone + compatible names (e.g. duplicate AutoZone + Caleb rows), not two different people on a main line. */
+function looseSameContact(a, b) {
+  const pha = phoneDigits10(a.phone);
+  const phb = phoneDigits10(b.phone);
+  if (!pha || pha !== phb) return false;
+  if (companyDedupeTag(a.company) !== companyDedupeTag(b.company)) return false;
+  const na = normalizeHonorificName(a.name || '');
+  const nb = normalizeHonorificName(b.name || '');
+  if (na && nb) {
+    if (na === nb) return true;
+    if (na.includes(nb) || nb.includes(na)) return true;
+    return false;
+  }
+  if (!na && !nb) return true;
+  return false;
+}
+
+/** Merge duplicate rows (same email, or same phone + same person, or same company+name). */
+function dedupeContactRows(contacts) {
+  if (!Array.isArray(contacts) || contacts.length === 0) return contacts;
+  const map = new Map();
+  for (const raw of contacts) {
+    if (!raw || typeof raw !== 'object') continue;
+    const c = { ...raw };
+    const key = contactDedupeKey(c);
+    const prev = map.get(key);
+    if (!prev) {
+      map.set(key, c);
+      continue;
+    }
+    map.set(key, mergeContactPrefer(c, prev));
+  }
+  let list = Array.from(map.values());
+  const out = [];
+  for (const c of list) {
+    const j = out.findIndex((p) => looseSameContact(p, c));
+    if (j >= 0) {
+      out[j] = mergeContactPrefer(out[j], c);
+    } else {
+      out.push(c);
+    }
+  }
+  return out;
+}
+
 async function extractProjectDetails(userText, anthropicClient) {
   const prompt = `You are extracting structured project data from a construction bid opportunity pasted in Slack (may include URLs, ITB text, scope snippets).
 
@@ -1236,6 +1344,9 @@ Include a separate JSON object whenever formatting or proximity ties a PLAUSIBLE
 
 Use layout: same row/column in a table, same title-block column, "Attn:", "Submitted by:", "Prepared by:", letterhead blocks, signature lines, and label:value pairs. One person or firm cluster = one array element; do not merge unrelated people.
 
+DEDUPLICATION
+If the same person or firm appears in multiple documents (same email, or same phone + same individual name, or trivial company name variants like "AutoZone Inc." vs "AutoZone Parts, Inc." with the same lead contact), output **one** JSON object only — combine all fields so nothing is lost.
+
 ROLE / ORDER (set "role" from best fit; list in this priority)
 1. OWNER / CLIENT (always first when identifiable)
 2. GENERAL CONTRACTOR
@@ -1333,12 +1444,17 @@ Short text lines name the source PDF file and page number before each page image
         ];
 
         if (isContactTask) {
-          const contacts = parseContactJsonArray(answer);
+          let contacts = parseContactJsonArray(answer);
           if (!contacts) {
             console.error('[doc-task] Could not parse contact JSON; falling back to plain text in DOCX');
           }
 
           if (Array.isArray(contacts) && contacts.length > 0) {
+            const before = contacts.length;
+            contacts = dedupeContactRows(contacts);
+            if (contacts.length < before) {
+              console.log(`[doc-task] deduped contacts ${before} -> ${contacts.length}`);
+            }
             for (const c of contacts) {
               children.push(
                 new Paragraph({
@@ -1416,8 +1532,9 @@ Short text lines name the source PDF file and page number before each page image
 
         let slackPreview = answer;
         if (isContactTask) {
-          const contactsSlack = parseContactJsonArray(answer);
+          let contactsSlack = parseContactJsonArray(answer);
           if (Array.isArray(contactsSlack) && contactsSlack.length > 0) {
+            contactsSlack = dedupeContactRows(contactsSlack);
             slackPreview = contactsSlack
               .slice(0, 10)
               .map((c) => {

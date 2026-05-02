@@ -202,6 +202,44 @@ function findFileByName(fileName) {
 
 async function readPdf(filePath) {
   const basename = path.basename(filePath);
+  let bytes = 0;
+  try {
+    bytes = fs.statSync(filePath).size;
+  } catch {
+    bytes = 0;
+  }
+
+  if (bytes > 55 * 1024 * 1024) {
+    const tmpHuge = path.join(
+      os.tmpdir(),
+      `pdftxt-huge-${process.pid}-${Date.now()}-${basename.replace(/[^a-zA-Z0-9._-]/g, '_')}.txt`
+    );
+    try {
+      await execFileAsync(
+        'pdftotext',
+        ['-layout', '-nopgbrk', '-f', '1', '-l', '30', filePath, tmpHuge],
+        { timeout: 300000, maxBuffer: 24 * 1024 * 1024 }
+      );
+      if (fs.existsSync(tmpHuge)) {
+        const head = fs.readFileSync(tmpHuge, 'utf8');
+        try {
+          fs.unlinkSync(tmpHuge);
+        } catch {
+          /* ignore */
+        }
+        const note =
+          '[Large PDF — first ~30 pages as text (title blocks usually here). Remainder may be vector/scanned; use page images when provided.]';
+        return `[PDF: ${basename}]\n${note}\n\n${head.trim()}`;
+      }
+    } catch {
+      try {
+        if (fs.existsSync(tmpHuge)) fs.unlinkSync(tmpHuge);
+      } catch {
+        /* ignore */
+      }
+    }
+  }
+
   let text = '';
   try {
     const { PDFParse } = require('pdf-parse');
@@ -296,12 +334,54 @@ async function readFile(filePath) {
   }
 }
 
+/** Lower = read / raster earlier in contact-style jobs (title blocks, plansets). */
+function contactFilePriority(filePath) {
+  const n = path.basename(filePath).toLowerCase();
+  const ext = path.extname(n);
+  if (ext !== '.pdf') return 40;
+  if (
+    /planset|plan.?set|combined.?set|full.?set|master.?plan|drawing.?index|plan.?book|set.?of.?draw/.test(n)
+  ) {
+    return 0;
+  }
+  if (
+    /geotech|spec|addendum|bid|itb|prequal|transmittal|00[-_]|report|proposal|contract|instruction|submittal|cover|directory|form|notice|pre-bid|rfp|rfq/.test(
+      n
+    )
+  ) {
+    return 1;
+  }
+  if (/plan|draw|sheet|arch|struct|civil|mep|survey|landscape|code/.test(n)) return 2;
+  return 10;
+}
+
+function sortFilesForContactRead(files) {
+  return [...files].sort((a, b) => {
+    const pa = contactFilePriority(a);
+    const pb = contactFilePriority(b);
+    if (pa !== pb) return pa - pb;
+    try {
+      const sa = fs.statSync(a).size;
+      const sb = fs.statSync(b).size;
+      if (path.extname(a).toLowerCase() === '.pdf' && path.extname(b).toLowerCase() === '.pdf') {
+        return sb - sa;
+      }
+      return 0;
+    } catch {
+      return 0;
+    }
+  });
+}
+
 /**
  * Reads all supported files in a folder and returns combined extracted text.
- * Truncates to ~80,000 chars to stay within Claude's context window.
+ * Truncates to maxChars (default ~80k). Optional contactReadOrder boosts plansets/specs before the slice cuts off huge sets.
  */
-async function readAllFilesInFolder(folderPath, maxChars = 80000) {
-  const files = listProjectFiles(folderPath);
+async function readAllFilesInFolder(folderPath, maxChars = 80000, readOpts = {}) {
+  let files = listProjectFiles(folderPath);
+  if (readOpts.contactReadOrder) {
+    files = sortFilesForContactRead(files);
+  }
   const parts = [];
   for (const f of files) {
     const text = await readFile(f);
@@ -419,32 +499,26 @@ async function readAllFilesWithVision(folderPath, options = {}) {
     contactCoverPages = false,
     maxTextChars = 80000,
   } = options;
-  const text = await readAllFilesInFolder(folderPath, maxTextChars);
+  const text = await readAllFilesInFolder(folderPath, maxTextChars, {
+    contactReadOrder: contactCoverPages,
+  });
   const allImages = [];
   let pdfs = listProjectFiles(folderPath).filter((fp) => fp.toLowerCase().endsWith('.pdf'));
 
-  function priorityScore(p) {
-    const n = path.basename(p).toLowerCase();
-    if (
-      /geotech|spec|addendum|bid|itb|prequal|transmittal|00[-_]|report|proposal|contract|instruction|submittal|cover|directory|form|notice|pre-bid|rfp|rfq/.test(
-        n
-      )
-    ) {
-      return 0;
-    }
-    if (/plan|draw|sheet|arch|struct|civil|mep|survey|landscape|code/.test(n)) return 1;
-    return 2;
+  if (contactCoverPages) {
+    pdfs = sortFilesForContactRead(pdfs);
+  } else {
+    pdfs.sort((a, b) => {
+      const pa = contactFilePriority(a);
+      const pb = contactFilePriority(b);
+      if (pa !== pb) return pa - pb;
+      try {
+        return fs.statSync(a).size - fs.statSync(b).size;
+      } catch {
+        return 0;
+      }
+    });
   }
-  pdfs.sort((a, b) => {
-    const pa = priorityScore(a);
-    const pb = priorityScore(b);
-    if (pa !== pb) return pa - pb;
-    try {
-      return fs.statSync(a).size - fs.statSync(b).size;
-    } catch {
-      return 0;
-    }
-  });
 
   if (contactCoverPages) {
     for (const pdfPath of pdfs) {

@@ -1219,14 +1219,32 @@ async function handleProposalPipeline(userText, { slackClient, channel, threadTs
         isContactTask || /pdf|docx|\bdoc\b|word|spreadsheet|excel|sheet\b/i.test(effectiveText);
 
       const systemPrompt = isContactTask
-        ? `You are extracting a contact directory from construction project documents. Be EXHAUSTIVE — search drawing title blocks, spec cover pages, geotech reports, bid forms, and any other source. Return contacts ordered by importance:
-1. OWNER / CLIENT (always first)
+        ? `You are extracting a CONTACT DIRECTORY from construction project documents (PDFs, Word, spreadsheets, extracted text, and page images). Be EXHAUSTIVE.
+
+WHERE TO LOOK
+Drawing title blocks, spec cover pages and division 00 / procurement sections, geotech and report cover sheets, bid forms, submittal transmittals, RFI headers, addenda, contracts, org charts, letterhead, signature blocks, tables, and footer/contact strips.
+
+HOW TO DECIDE "IS THIS A CONTACT?" (no fixed name list — infer from context)
+Include a separate JSON object whenever formatting or proximity ties a PLAUSIBLE PERSON NAME or ORGANIZATION NAME to one or more STRONG CONTACT SIGNALS:
+- Phone (any common format, office/cell/fax labels)
+- Email
+- Mailing or site address (street/city/state/ZIP)
+- Professional license numbers (contractor, architect, engineer, PE, etc.)
+- Job titles (Project Manager, PE, Principal, Superintendent, etc.) when paired with a person or firm
+
+Use layout: same row/column in a table, same title-block column, "Attn:", "Submitted by:", "Prepared by:", letterhead blocks, signature lines, and label:value pairs. One person or firm cluster = one array element; do not merge unrelated people.
+
+ROLE / ORDER (set "role" from best fit; list in this priority)
+1. OWNER / CLIENT (always first when identifiable)
 2. GENERAL CONTRACTOR
 3. ARCHITECT
 4. CIVIL / STRUCTURAL / MEP / GEOTECH ENGINEERS
-5. OTHER CONSULTANTS / VENDORS
+5. OTHER CONSULTANTS, vendors, inspectors, agencies
 
-Return ONLY a JSON array. Each contact: { "role": "...", "company": "...", "name": "...", "title": "...", "address": "...", "phone": "...", "email": "..." }. Use null for missing fields.`
+OUTPUT
+Return ONLY a JSON array (no markdown, no commentary). Each object:
+{ "role": "...", "company": "...", "name": "...", "title": "...", "address": "...", "phone": "...", "email": "...", "license": "..." }
+Use null for unknown fields. If you have a firm signal (phone/email/address/license/title) but an ambiguous personal name, still include the entry with name null and company or role inferred from context.`
         : images.length > 0
           ? `You are a construction document analyst. The images above are pages from project PDFs (drawings, specs, reports). Read them carefully — title blocks, schedules, notes, and details often contain critical info that text extraction misses. Combine the visual information with the text below to give a thorough, specific answer.`
           : 'You are a construction document analyst. Answer the user request based ONLY on the provided project documents (text extraction). Be thorough and specific.';
@@ -1351,6 +1369,9 @@ Return ONLY a JSON array. Each contact: { "role": "...", "company": "...", "name
               if (c.email) {
                 children.push(new Paragraph({ children: [new TextRun({ text: `Email: ${c.email}`, size: 22, font: 'Arial' })] }));
               }
+              if (c.license) {
+                children.push(new Paragraph({ children: [new TextRun({ text: `License: ${c.license}`, size: 22, font: 'Arial' })] }));
+              }
               children.push(new Paragraph({ spacing: { after: 200 } }));
             }
           } else {
@@ -1394,6 +1415,7 @@ Return ONLY a JSON array. Each contact: { "role": "...", "company": "...", "name
                 if (c.name) lines.push(`${c.name}${c.title ? ', ' + c.title : ''}`);
                 if (c.phone) lines.push(`📞 ${c.phone}`);
                 if (c.email) lines.push(`✉️ ${c.email}`);
+                if (c.license) lines.push(`License: ${c.license}`);
                 return lines.join('\n');
               })
               .join('\n\n');

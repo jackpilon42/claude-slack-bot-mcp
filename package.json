@@ -15,6 +15,7 @@
     "extract:project-timeline": "python3 scripts/extract_project_timeline_grid.py",
     "import:project-timeline": "node scripts/smartsheet-import-from-grid.js",
     "generate:timeline-commands": "python3 scripts/generate_excel_format_bot_commands.py > scripts/project_timeline_bot_commands.txt",
+    "pdf-extractor": "node scripts/pdf-extractor.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -29,6 +30,7 @@
     "docx": "^9.6.1",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
+    "glob": "^11.0.0",
     "mammoth": "^1.12.0",
     "openai": "^6.3.0",
     "pdf-parse": "^2.4.5",
